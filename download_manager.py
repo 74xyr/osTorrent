@@ -27,13 +27,14 @@ class DownloadManager:
         self.lock = threading.Lock()
         self.torrents = {}
         
-        # Pfad zum server Ordner
-        self.aria2_path = str(Path(__file__).parent / "server" / "aria2c.exe")
+        if getattr(sys, 'frozen', False):
+            base_path = Path(sys._MEIPASS)
+        else:
+            base_path = Path(__file__).parent
+
+        self.aria2_path = str(base_path / "server" / "aria2c.exe")
         
         self._start_aria2_daemon()
-        
-        self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
-        self.monitor_thread.start()
 
     def _start_aria2_daemon(self):
         if not os.path.exists(self.aria2_path):
@@ -48,7 +49,7 @@ class DownloadManager:
             "--max-connection-per-server=16",
             "--seed-time=0",
             "--quiet=true",
-            "--follow-torrent=mem" # Wichtig: Behält Torrent im Speicher
+            "--follow-torrent=mem"
         ]
         
         limit = self.config.get("download_limit")

@@ -8,19 +8,21 @@ from download_manager import DownloadManager
 
 class TorrentClient:
     def __init__(self):
-        # Check ob aria2c.exe existiert
-        exe_path = Path(__file__).parent / "server" / "aria2c.exe"
-        if not exe_path.exists():
-            # Fallback check im root folder, falls setup script versagt hat
-            exe_path = Path(__file__).parent / "aria2c.exe"
+        if getattr(sys, 'frozen', False):
+            base_path = Path(sys._MEIPASS)
+        else:
+            base_path = Path(__file__).parent
             
+        exe_path = base_path / "server" / "aria2c.exe"
+
+        if not getattr(sys, 'frozen', False) and not exe_path.exists():
+             exe_path = base_path / "aria2c.exe"
+
         if not exe_path.exists():
             print("\n  FEHLER: aria2c.exe nicht gefunden!")
             sys.exit(1)
 
         self.ui = UI()
-        self.config = ConfigManager()
-        self.dm = DownloadManager(self.config)
 
     def run(self):
         if self.config.get("first_run"): self.setup()
