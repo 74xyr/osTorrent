@@ -1,63 +1,66 @@
 @echo off
-title osTorrent Builder
+title osTorrent Builder (Fixed)
 color 0b
 
 echo ==========================================
-echo      osTorrent Exe Builder (PyInstaller)
+echo      osTorrent Exe Builder
 echo ==========================================
 echo.
 
-:: 1. Aria2c sicherstellen (wird in die Exe gepackt)
-echo [1/4] Pruefe Aria2c...
+:: 1. Sicherstellen, dass Aria2c da ist
 if not exist "server\aria2c.exe" (
-    echo Aria2c fehlt. Starte Downloader script...
+    echo [INFO] Lade Aria2c herunter...
     python -c "from aria2_setup import install_aria2; install_aria2()"
 )
 
 if not exist "server\aria2c.exe" (
     color 0c
-    echo FEHLER: Aria2c konnte nicht geladen werden.
+    echo [FEHLER] server/aria2c.exe fehlt!
     pause
     exit
 )
 
-:: 2. PyInstaller installieren
+:: 2. PyInstaller installieren (falls noch nicht da)
 echo.
-echo [2/4] Installiere PyInstaller...
+echo [INFO] Installiere Requirements...
 pip install pyinstaller aiohttp
 cls
 
-:: 3. Exe bauen
+:: 3. Exe bauen (via Python Modul)
 echo.
-echo [3/4] Erstelle osTorrent.exe...
-echo Dies kann einen Moment dauern...
+echo [INFO] Erstelle osTorrent.exe...
+echo Dies dauert einen Moment...
 echo.
 
-:: --onefile: Alles in eine Datei
-:: --name: Name der Exe
-:: --add-data: Fügt den server Ordner (mit aria2c) in die Exe ein
-:: --clean: Cache leeren
-pyinstaller --noconfirm --onefile --console --clean ^
+:: WICHTIG: Wir nutzen "python -m PyInstaller" statt nur "pyinstaller"
+python -m PyInstaller --noconfirm --onefile --console --clean ^
     --name "osTorrent" ^
-    --add-data "server;server" ^
+    --add-data "server\aria2c.exe;server" ^
+    --hidden-import "aria2_setup" ^
     main.py
 
-:: 4. Aufräumen und Verschieben
 echo.
-echo [4/4] Raeume auf...
-move /Y "dist\osTorrent.exe" "osTorrent.exe"
-rmdir /S /Q build
-rmdir /S /Q dist
-del osTorrent.spec
+echo ==========================================
+echo             STATUS BERICHT
+echo ==========================================
 
-cls
-color 0a
-echo ==========================================
-echo             FERTIG!
-echo ==========================================
-echo.
-echo Die Datei "osTorrent.exe" wurde erstellt.
-echo Du kannst diese Datei nun an Freunde senden.
-echo Sie benoetigen KEIN Python und KEINE Installation.
-echo.
+if exist "dist\osTorrent.exe" (
+    color 0a
+    echo [ERFOLG] Die Datei wurde erstellt!
+    echo.
+    echo Kopiere Datei aus "dist" hierher...
+    copy /Y "dist\osTorrent.exe" "osTorrent.exe"
+    echo.
+    echo Fertig! Deine "osTorrent.exe" ist bereit.
+) else (
+    color 0c
+    echo [FEHLER] Die .exe wurde NICHT erstellt.
+    echo Bitte schau oben nach Fehlermeldungen.
+)
+
+:: Aufräumen (optional)
+if exist "osTorrent.spec" del "osTorrent.spec"
+if exist "build" rmdir /S /Q "build"
+if exist "dist" rmdir /S /Q "dist"
+
 pause
