@@ -12,8 +12,9 @@ class ConfigManager:
         
         self.default_config = {
             "default_download_path": str(Path.home() / "Downloads"),
-            "download_limit": 0,  # 0 = unlimited (KB/s)
+            "download_limit": 0,
             "auto_open_on_finish": False,
+            "refresh_rate": 3,  # NEU: Standard 3 Sekunden
             "first_run": True
         }
         self.config = self._load_config()

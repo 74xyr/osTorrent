@@ -8,6 +8,16 @@ from download_manager import DownloadManager
 
 class TorrentClient:
     def __init__(self):
+        # Check ob aria2c.exe existiert
+        exe_path = Path(__file__).parent / "server" / "aria2c.exe"
+        if not exe_path.exists():
+            # Fallback check im root folder, falls setup script versagt hat
+            exe_path = Path(__file__).parent / "aria2c.exe"
+            
+        if not exe_path.exists():
+            print("\n  FEHLER: aria2c.exe nicht gefunden!")
+            sys.exit(1)
+
         self.ui = UI()
         self.config = ConfigManager()
         self.dm = DownloadManager(self.config)
@@ -52,8 +62,6 @@ class TorrentClient:
     def list_torrents(self):
         while True:
             self.ui.header()
-            
-            # Torrents holen
             torrents = list(self.dm.get_all_torrents().values())
             
             if not torrents: 
@@ -63,34 +71,30 @@ class TorrentClient:
                     self.ui.print_torrent(i, t)
             
             print("-" * 70)
-            print("  [C] Clear Finished List (Hotkey)")
-            print("  [M] Manage Torrent (Pause/Delete...)")
+            # Text angepasst wie gewünscht
+            print("  [C] Clear finished list")
+            print("  [M] Manage Torrent")
             print("  [0] Zurück")
             print()
-            print("  Auto-Refresh in 3s... (Drücke Taste für Menü)")
+            # "Auto-Refresh in..." Text wurde entfernt
             
-            # Wartet 3 Sekunden oder bis Taste gedrückt wird
-            key = self.ui.wait_for_input(3)
+            # Refresh Rate aus Config holen
+            rate = self.config.get("refresh_rate")
             
-            # === LOGIK ===
+            # Warten (oder sofort neu laden bei 0)
+            key = self.ui.wait_for_input(rate)
             
-            # 1. Kein Key gedrückt (Timeout) -> Loop startet neu (Refresh)
             if key is None:
-                continue
-                
-            # 2. '0' gedrückt -> Zurück
+                continue # Refresh loop
+            
             if key == '0':
                 break
                 
-            # 3. 'c' gedrückt -> Liste säubern
             if key == 'c':
                 self.dm.clear_finished()
-                # Sofortiger Refresh ohne Warten
                 continue
                 
-            # 4. 'm' oder Enter gedrückt -> Torrent auswählen
-            if key == 'm' or key == '\r': # \r ist Enter
-                # Wir stoppen den Refresh, um Eingabe zu ermöglichen
+            if key == 'm' or key == '\r':
                 c = self.ui.input("Nummer eingeben")
                 if c.isdigit():
                     idx = int(c) - 1
@@ -100,8 +104,10 @@ class TorrentClient:
     def manage(self, t):
         while True:
             self.ui.header()
-            print(f"  {t.name}\n  Status: {t.state_str}")
+            print(f"  {self.ui.COLOR}{t.name}{self.ui.RESET}")
+            print(f"  Status: {t.state_str}")
             print("-" * 70)
+            
             opts = ["Pause" if t.state_str != "Paused" else "Resume", "Open Folder", "Remove"]
             for i, o in enumerate(opts, 1): print(f"  [{i}] {o}")
             print("\n  [0] Back")
@@ -121,20 +127,32 @@ class TorrentClient:
     def settings(self):
         while True:
             self.ui.header()
-            print(f"  1. Path: {self.config.get('default_download_path')}")
-            print(f"  2. Limit: {self.config.get('download_limit')} KB/s")
-            print(f"  3. Cache Clear")
-            print("\n  0. Back")
+            conf = self.config
+            # Neue Option 5 hinzugefügt
+            print(f"  1. Pfad: {conf.get('default_download_path')}")
+            print(f"  2. Limit: {conf.get('download_limit')} KB/s")
+            print(f"  3. Auto-Open: {conf.get('auto_open_on_finish')}")
+            print(f"  4. Cache leeren")
+            print(f"  5. Auto-Refresh: {conf.get('refresh_rate')}s (0 = durchgehend)")
+            print("\n  0. Zurück")
+            
             c = self.ui.input("Wahl")
             if c == '0': break
-            if c == '1': 
+            elif c == '1': 
                 p = self.ui.input("Pfad")
-                if p: self.config.set("default_download_path", p)
-            if c == '2':
+                if p: conf.set("default_download_path", p)
+            elif c == '2':
                 l = self.ui.input("Limit")
                 if l.isdigit():
-                    self.config.set("download_limit", int(l))
+                    conf.set("download_limit", int(l))
                     self.dm.update_limit()
-            if c == '3':
-                self.config.clear_cache()
+            elif c == '3':
+                curr = conf.get("auto_open_on_finish")
+                conf.set("auto_open_on_finish", not curr)
+            elif c == '4':
+                conf.clear_cache()
                 self.ui.message("Cache geleert")
+            elif c == '5':
+                r = self.ui.input("Sekunden (0 = durchgehend)")
+                if r.isdigit():
+                    conf.set("refresh_rate", int(r))
