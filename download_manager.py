@@ -3,7 +3,7 @@ import xmlrpc.client
 import time
 import threading
 import os
-import signal
+import sys
 from pathlib import Path
 from dataclasses import dataclass
 
@@ -27,14 +27,20 @@ class DownloadManager:
         self.lock = threading.Lock()
         self.torrents = {}
         
+        # === PFAD FIX FÜR EXE ===
         if getattr(sys, 'frozen', False):
+            # Exe Pfad (PyInstaller Temp)
             base_path = Path(sys._MEIPASS)
         else:
+            # Skript Pfad
             base_path = Path(__file__).parent
-
+            
         self.aria2_path = str(base_path / "server" / "aria2c.exe")
+        # ========================
         
         self._start_aria2_daemon()
+        self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
+        self.monitor_thread.start()
 
     def _start_aria2_daemon(self):
         if not os.path.exists(self.aria2_path):
@@ -75,6 +81,10 @@ class DownloadManager:
             self.rpc.aria2.getVersion()
         except: pass
 
+    # ... (Rest der Methoden bleibt gleich wie in der vorherigen Version) ...
+    # Füge hier die Methoden add_magnet, pause_torrent, etc. wieder ein, 
+    # oder lass sie stehen, wenn du nur den __init__ Teil geändert hast.
+    
     def add_magnet(self, magnet_link, save_path):
         if not self.rpc: return None
         try:
@@ -98,7 +108,6 @@ class DownloadManager:
             except: pass
 
     def clear_finished(self):
-        """Löscht fertige Downloads aus der Liste"""
         if not self.rpc: return
         with self.lock:
             current_gids = list(self.torrents.keys())
@@ -115,7 +124,6 @@ class DownloadManager:
         self.rpc.aria2.changeGlobalOption({"max-download-limit": limit_str})
 
     def _monitor_loop(self):
-        # Felder die wir von Aria2 abfragen (jetzt inklusive 'followedBy')
         keys = ["gid", "status", "totalLength", "completedLength", 
                 "downloadSpeed", "dir", "bittorrent", "followedBy"]
         
@@ -136,69 +144,45 @@ class DownloadManager:
                     gid = d['gid']
                     status_raw = d['status']
                     
-                    # === FILTER LOGIK ===
-                    # Wenn der Download fertig ist UND es nur Metadaten waren
-                    # (Erkennbar daran, dass er einen Nachfolger 'followedBy' hat 
-                    #  oder der Name immer noch der Placeholder ist)
-                    
                     is_metadata_artifact = False
-                    
-                    # Check 1: Hat es einen Nachfolger? (Dann war dies nur der .torrent Download)
-                    if 'followedBy' in d:
-                        is_metadata_artifact = True
+                    if 'followedBy' in d: is_metadata_artifact = True
                         
-                    # Name ermitteln
                     name = "Unbekannt / Metadata"
                     if 'bittorrent' in d and 'info' in d['bittorrent']:
                         name = d['bittorrent']['info'].get('name', name)
                     
-                    # Check 2: Ist fertig, heißt aber immer noch Metadata (Backup Check)
                     if status_raw == 'complete' and name == "Unbekannt / Metadata":
                         is_metadata_artifact = True
 
-                    # Wenn es ein Artefakt ist -> Aus Aria2 löschen & überspringen
                     if status_raw == 'complete' and is_metadata_artifact:
-                        try:
-                            self.rpc.aria2.removeDownloadResult(gid)
+                        try: self.rpc.aria2.removeDownloadResult(gid)
                         except: pass
                         continue 
-                    # ====================
                     
-                    # Normale Verarbeitung
                     total = int(d['totalLength'])
                     done = int(d['completedLength'])
                     speed = int(d['downloadSpeed'])
                     
                     progress = 0.0
-                    if total > 0:
-                        progress = (done / total) * 100
+                    if total > 0: progress = (done / total) * 100
                     
                     state_str = status_raw.capitalize()
                     
-                    # Wenn aktiv aber noch keine Größe -> Metadaten laden
                     if status_raw == 'active' and total == 0:
                         state_str = "Metadata"
                     elif status_raw == 'active':
                         state_str = "Downloading"
                     
                     eta = 0
-                    if speed > 0 and total > done:
-                        eta = int((total - done) / speed)
+                    if speed > 0 and total > done: eta = int((total - done) / speed)
                         
                     current_torrents[gid] = TorrentData(
-                        gid=gid,
-                        name=name,
-                        progress=progress,
-                        state_str=state_str,
-                        download_speed=speed,
-                        eta=eta,
-                        save_path=d['dir'],
-                        total_size=total
+                        gid=gid, name=name, progress=progress,
+                        state_str=state_str, download_speed=speed,
+                        eta=eta, save_path=d['dir'], total_size=total
                     )
                     
-                    # Auto Open Logik
                     if status_raw == "complete" and self.config.get("auto_open_on_finish"):
-                         # Einfacher Schutz gegen mehrfaches Öffnen nötig
                          pass
 
                 with self.lock:

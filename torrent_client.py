@@ -8,26 +8,40 @@ from download_manager import DownloadManager
 
 class TorrentClient:
     def __init__(self):
+        # 1. Config & UI ZUERST laden (verhindert den AttributeError)
+        self.ui = UI()
+        self.config = ConfigManager()
+
+        # 2. Pfad zur aria2c.exe finden (Unterschied .py vs .exe)
         if getattr(sys, 'frozen', False):
+            # Wenn wir als .exe laufen (PyInstaller Temp Ordner)
             base_path = Path(sys._MEIPASS)
         else:
+            # Wenn wir als normales Skript laufen
             base_path = Path(__file__).parent
             
-        exe_path = base_path / "server" / "aria2c.exe"
+        # Wir suchen im "server" Ordner (so wie in build.bat definiert)
+        self.aria2_path = base_path / "server" / "aria2c.exe"
 
-        if not getattr(sys, 'frozen', False) and not exe_path.exists():
-             exe_path = base_path / "aria2c.exe"
-
-        if not exe_path.exists():
-            print("\n  FEHLER: aria2c.exe nicht gefunden!")
+        # Check ob Datei existiert
+        if not self.aria2_path.exists():
+            print(f"\n[CRITICAL ERROR] aria2c.exe not found at:")
+            print(f"{self.aria2_path}")
+            print("\nPlease rebuild the exe correctly.")
+            input("Press Enter to exit...")
             sys.exit(1)
 
-        self.ui = UI()
+        # 3. Download Manager starten
+        self.dm = DownloadManager(self.config)
 
     def run(self):
-        if self.config.get("first_run"): self.setup()
-        try: self.main_menu()
-        finally: self.dm.shutdown()
+        if self.config.get("first_run"): 
+            self.setup()
+        
+        try: 
+            self.main_menu()
+        finally: 
+            self.dm.shutdown()
 
     def setup(self):
         self.ui.header()
@@ -56,10 +70,13 @@ class TorrentClient:
             p = self.ui.input("Pfad")
             if p: save_path = p
         
-        Path(save_path).mkdir(parents=True, exist_ok=True)
-        gid = self.dm.add_magnet(magnet, save_path)
-        if gid: self.ui.message("Hinzugefügt!")
-        else: self.ui.message("Fehler!")
+        try:
+            Path(save_path).mkdir(parents=True, exist_ok=True)
+            gid = self.dm.add_magnet(magnet, save_path)
+            if gid: self.ui.message("Hinzugefügt!")
+            else: self.ui.message("Fehler!")
+        except Exception as e:
+            self.ui.message(f"Fehler beim Ordner erstellen: {e}")
 
     def list_torrents(self):
         while True:
@@ -73,29 +90,19 @@ class TorrentClient:
                     self.ui.print_torrent(i, t)
             
             print("-" * 70)
-            # Text angepasst wie gewünscht
             print("  [C] Clear finished list")
             print("  [M] Manage Torrent")
             print("  [0] Zurück")
             print()
-            # "Auto-Refresh in..." Text wurde entfernt
             
-            # Refresh Rate aus Config holen
             rate = self.config.get("refresh_rate")
-            
-            # Warten (oder sofort neu laden bei 0)
             key = self.ui.wait_for_input(rate)
             
-            if key is None:
-                continue # Refresh loop
-            
-            if key == '0':
-                break
-                
+            if key is None: continue 
+            if key == '0': break
             if key == 'c':
                 self.dm.clear_finished()
                 continue
-                
             if key == 'm' or key == '\r':
                 c = self.ui.input("Nummer eingeben")
                 if c.isdigit():
@@ -130,7 +137,6 @@ class TorrentClient:
         while True:
             self.ui.header()
             conf = self.config
-            # Neue Option 5 hinzugefügt
             print(f"  1. Pfad: {conf.get('default_download_path')}")
             print(f"  2. Limit: {conf.get('download_limit')} KB/s")
             print(f"  3. Auto-Open: {conf.get('auto_open_on_finish')}")
@@ -155,6 +161,6 @@ class TorrentClient:
                 conf.clear_cache()
                 self.ui.message("Cache geleert")
             elif c == '5':
-                r = self.ui.input("Sekunden (0 = durchgehend)")
+                r = self.ui.input("Sekunden")
                 if r.isdigit():
                     conf.set("refresh_rate", int(r))
