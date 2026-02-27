@@ -23,7 +23,7 @@ if not exist "server\aria2c.exe" (
 :: 2. PyInstaller installieren (falls noch nicht da)
 echo.
 echo [INFO] Installiere Requirements...
-pip install pyinstaller aiohttp
+pip install pyinstaller requests
 cls
 
 :: 3. Exe bauen (via Python Modul)

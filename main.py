@@ -1,19 +1,11 @@
-import sys
 from aria2_setup import install_aria2
 from torrent_client import TorrentClient
+import sys
 
 if __name__ == "__main__":
-    # 1. Auto-Installation ausführen
-    success = install_aria2()
-    
-    if not success:
-        print("Kritischer Fehler: Konnte Aria2c nicht installieren.")
-        input("Drücke Enter zum Beenden...")
+    if not install_aria2():
+        print("Setup Failed.")
         sys.exit(1)
-
-    # 2. Client starten
-    try:
-        client = TorrentClient()
-        client.run()
-    except KeyboardInterrupt:
-        pass
+        
+    client = TorrentClient()
+    client.run()

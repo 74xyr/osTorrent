@@ -1,166 +1,300 @@
 import sys
 import time
 import os
+import requests
+import msvcrt
 from pathlib import Path
+import tkinter as tk
+from tkinter import filedialog
+
 from ui import UI
 from config_manager import ConfigManager
 from download_manager import DownloadManager
 
 class TorrentClient:
     def __init__(self):
-        # 1. Config & UI ZUERST laden (verhindert den AttributeError)
-        self.ui = UI()
-        self.config = ConfigManager()
-
-        # 2. Pfad zur aria2c.exe finden (Unterschied .py vs .exe)
+        # Aria2c Check
         if getattr(sys, 'frozen', False):
-            # Wenn wir als .exe laufen (PyInstaller Temp Ordner)
             base_path = Path(sys._MEIPASS)
         else:
-            # Wenn wir als normales Skript laufen
             base_path = Path(__file__).parent
-            
-        # Wir suchen im "server" Ordner (so wie in build.bat definiert)
-        self.aria2_path = base_path / "server" / "aria2c.exe"
-
-        # Check ob Datei existiert
-        if not self.aria2_path.exists():
-            print(f"\n[CRITICAL ERROR] aria2c.exe not found at:")
-            print(f"{self.aria2_path}")
-            print("\nPlease rebuild the exe correctly.")
-            input("Press Enter to exit...")
+        
+        exe_path = base_path / "server" / "aria2c.exe"
+        if not exe_path.exists():
+            exe_path = base_path / "aria2c.exe"
+        
+        if not exe_path.exists():
+            print("CRITICAL: Aria2c missing.")
             sys.exit(1)
 
-        # 3. Download Manager starten
+        self.ui = UI()
+        self.config = ConfigManager()
         self.dm = DownloadManager(self.config)
+        
+        # Sprachen Strings
+        self.txt = {
+            "en": {
+                "dl_torrent": "Download Torrent",
+                "explore": "Explore",
+                "explore_new": "Explore (NEW TORRENTS)",
+                "dl_list": "Download List",
+                "settings": "Settings",
+                "choose_path": "Default Path is",
+                "change_q": "Would you like to change it?",
+                "exit_warn": "Downloads are running! Are you sure you want to quit osTorrent?",
+                "added": "Torrent added successfully!",
+                "err_magnet": "Invalid Magnet Link",
+                "menu_clear": "Clear finished list",
+                "menu_manage": "Manage Torrent (Press M or Enter)",
+                "limit": "Download Limit"
+            },
+            "de": {
+                "dl_torrent": "Torrent herunterladen",
+                "explore": "Entdecken",
+                "explore_new": "Entdecken (NEUE TORRENTS)",
+                "dl_list": "Download Liste",
+                "settings": "Einstellungen",
+                "choose_path": "Standard Pfad ist",
+                "change_q": "Möchten Sie diesen ändern?",
+                "exit_warn": "Es werden gerade Torrents installiert. Sind Sie sicher, dass Sie osTorrent beenden möchten?",
+                "added": "Torrent erfolgreich hinzugefügt!",
+                "err_magnet": "Ungültiger Magnet Link",
+                "menu_clear": "Liste bereinigen",
+                "menu_manage": "Verwalten (Drücke M oder Enter)",
+                "limit": "Download Limit"
+            }
+        }
+
+    def t(self, key):
+        """Übersetzer Helper"""
+        lang = self.config.get("language")
+        if not lang: lang = "en"
+        return self.txt.get(lang, self.txt["en"]).get(key, key)
 
     def run(self):
-        if self.config.get("first_run"): 
+        if self.config.get("first_run"):
             self.setup()
         
-        try: 
-            self.main_menu()
-        finally: 
-            self.dm.shutdown()
+        while True:
+            try:
+                self.main_menu()
+                break # Wenn main menu returned, beenden
+            except KeyboardInterrupt:
+                if self.check_exit():
+                    break
+        
+        self.dm.shutdown()
+
+    def check_exit(self):
+        """Prüft ob Downloads laufen vor Exit"""
+        if self.dm.is_downloading():
+            self.ui.clear()
+            if self.ui.confirm(self.t("exit_warn")):
+                return True
+            return False
+        return True
 
     def setup(self):
-        self.ui.header()
-        print("  Willkommen! Setup...")
-        def_path = self.config.get("default_download_path")
-        path = self.ui.input(f"Download Pfad [{def_path}]")
-        if path: self.config.set("default_download_path", path)
+        self.ui.clear()
+        print(self.ui.CYAN + "Welcome / Willkommen" + self.ui.RESET)
+        print()
+        
+        # 1. Sprache
+        options = ["English (EN)", "Deutsch (DE)"]
+        idx = self.ui.select_menu("Select your language", options, exit_option=False)
+        
+        lang = "en" if idx == 0 else "de"
+        self.config.set("language", lang)
+        
+        # 2. Pfad
+        self.ui.clear()
+        default = self.config.get("default_download_path")
+        print(f"\n  {self.t('choose_path')}: [{self.ui.CYAN}{default}{self.ui.RESET}]")
+        
+        if self.ui.confirm(self.t('change_q')):
+            # Folder Dialog öffnen (verstecktes TK Fenster)
+            root = tk.Tk()
+            root.withdraw()
+            # Fenster in den Vordergrund zwingen
+            root.attributes('-topmost', True)
+            
+            selected_path = filedialog.askdirectory(initialdir=default, title=self.t("choose_path"))
+            root.destroy()
+            
+            if selected_path:
+                self.config.set("default_download_path", selected_path)
+        
         self.config.set("first_run", False)
 
     def main_menu(self):
         while True:
-            self.ui.menu("Main Menu", ["Download Torrent", "Download List", "Settings"])
-            c = self.ui.input("Wahl")
-            if c == "1": self.add_torrent()
-            elif c == "2": self.list_torrents()
-            elif c == "3": self.settings()
-            elif c == "0": break
+            # Check for new torrents
+            has_new = False
+            try:
+                # Schneller Check ob wir überhaupt neue haben könnten
+                pass # (Logik passiert im Explore Tab Aufruf)
+            except: pass
 
-    def add_torrent(self):
+            explore_title = self.t("explore")
+            # Wir checken das Explore label später dynamisch
+            
+            options = [
+                self.t("dl_torrent"),
+                explore_title, # Placeholder, wird live nicht geupdatet im Main Menu Array, aber ok
+                self.t("dl_list"),
+                self.t("settings")
+            ]
+            
+            idx = self.ui.select_menu("osTorrent", options)
+            
+            if idx == -1: # Exit
+                if self.check_exit(): break
+                else: continue
+
+            if idx == 0: self.add_torrent_manual()
+            elif idx == 1: self.explore_tab()
+            elif idx == 2: self.download_list()
+            elif idx == 3: self.settings_menu()
+
+    def add_torrent_manual(self):
         self.ui.header()
-        magnet = self.ui.input("Magnet Link")
-        if not magnet.startswith("magnet:"): return
+        magnet = self.ui.input("Magnet Link") # Hier noch old-school input
+        if not magnet.startswith("magnet:"): 
+            self.ui.message(self.t("err_magnet"), self.ui.RED)
+            return
         
-        save_path = self.config.get("default_download_path")
-        if self.ui.input(f"Standardpfad ({save_path})? j/n") != 'j':
-            p = self.ui.input("Pfad")
-            if p: save_path = p
-        
-        try:
-            Path(save_path).mkdir(parents=True, exist_ok=True)
-            gid = self.dm.add_magnet(magnet, save_path)
-            if gid: self.ui.message("Hinzugefügt!")
-            else: self.ui.message("Fehler!")
-        except Exception as e:
-            self.ui.message(f"Fehler beim Ordner erstellen: {e}")
+        self.start_download(magnet)
 
-    def list_torrents(self):
+    def start_download(self, magnet):
+        path = self.config.get("default_download_path")
+        gid = self.dm.add_magnet(magnet, path)
+        if gid: self.ui.message(self.t("added"), self.ui.GREEN)
+        else: self.ui.message("Error", self.ui.RED)
+
+    def explore_tab(self):
+        url = "https://raw.githubusercontent.com/74xyr/osTorrent/main/torrents.json"
+        try:
+            self.ui.header("Lade Torrents...")
+            resp = requests.get(url, timeout=5)
+            data = resp.json()
+        except Exception as e:
+            self.ui.message(f"Connection Error: {e}", self.ui.RED)
+            return
+
         while True:
-            self.ui.header()
+            # Check New Torrents
+            new_exists = False
+            display_list = []
+            
+            for item in data:
+                name = item['name']
+                magnet = item['magnet']
+                
+                # Check ob neu
+                if self.config.is_torrent_new(magnet):
+                    name = f"{self.ui.YELLOW}[NEW]{self.ui.RESET} {name}"
+                    new_exists = True
+                
+                display_list.append(name)
+            
+            title = self.t("explore")
+            if new_exists:
+                title = self.t("explore_new")
+
+            # Zeige Liste
+            idx = self.ui.select_menu(title, display_list)
+            
+            if idx == -1: break # Zurück
+            
+            # Torrent ausgewählt
+            selected_item = data[idx]
+            self.ui.clear()
+            print(f"\n  {self.ui.CYAN}{selected_item['name']}{self.ui.RESET}")
+            if self.ui.confirm("Download this Torrent?"):
+                self.start_download(selected_item['magnet'])
+
+    def download_list(self):
+        while True:
+            self.ui.header(self.t("dl_list"))
             torrents = list(self.dm.get_all_torrents().values())
             
-            if not torrents: 
-                print("  Keine Torrents.")
+            if not torrents: print("  (Empty)")
             else:
                 for i, t in enumerate(torrents, 1):
                     self.ui.print_torrent(i, t)
             
-            print("-" * 70)
-            print("  [C] Clear finished list")
-            print("  [M] Manage Torrent")
-            print("  [0] Zurück")
-            print()
+            print("-" * 75)
+            print(f"  [C] {self.t('menu_clear')}")
+            print(f"  [M] {self.t('menu_manage')}")
+            print("  [0] Back")
             
             rate = self.config.get("refresh_rate")
-            key = self.ui.wait_for_input(rate)
+            key = self.ui.wait_for_input(rate if rate > 0 else 0.1) # UI update
             
-            if key is None: continue 
+            if key is None: continue
+            
             if key == '0': break
-            if key == 'c':
-                self.dm.clear_finished()
-                continue
-            if key == 'm' or key == '\r':
-                c = self.ui.input("Nummer eingeben")
-                if c.isdigit():
-                    idx = int(c) - 1
-                    if 0 <= idx < len(torrents):
-                        self.manage(torrents[idx])
+            if key == 'c': self.dm.clear_finished()
+            if key == 'm' or key == 'enter':
+                # Einfacher Manage Selector
+                t_names = [f"{t.state_str}: {t.name}" for t in torrents]
+                if not t_names: continue
+                
+                sel_idx = self.ui.select_menu("Manage Torrent", t_names)
+                if sel_idx != -1:
+                    self.manage_torrent(torrents[sel_idx])
 
-    def manage(self, t):
+    def manage_torrent(self, t):
         while True:
-            self.ui.header()
-            print(f"  {self.ui.COLOR}{t.name}{self.ui.RESET}")
-            print(f"  Status: {t.state_str}")
-            print("-" * 70)
+            self.ui.header(t.name[:50])
+            status = "Pause" if t.state_str != "Paused" else "Resume"
+            opts = [status, "Open Folder", "Remove"]
             
-            opts = ["Pause" if t.state_str != "Paused" else "Resume", "Open Folder", "Remove"]
-            for i, o in enumerate(opts, 1): print(f"  [{i}] {o}")
-            print("\n  [0] Back")
+            idx = self.ui.select_menu(f"Status: {t.state_str}", opts)
+            if idx == -1: break
             
-            c = self.ui.input("Action")
-            if c == '0': break
-            if c == '1':
+            if idx == 0:
                 if t.state_str == "Paused": self.dm.resume_torrent(t.gid)
                 else: self.dm.pause_torrent(t.gid)
                 break
-            if c == '2': self.dm.open_folder(t.save_path)
-            if c == '3':
-                if self.ui.input("Sicher? j/n") == 'j':
+            if idx == 1: 
+                self.dm.open_folder(t.save_path)
+            if idx == 2:
+                if self.ui.confirm("Delete Torrent?"):
                     self.dm.remove_torrent(t.gid)
                     break
 
-    def settings(self):
+    def settings_menu(self):
         while True:
-            self.ui.header()
-            conf = self.config
-            print(f"  1. Pfad: {conf.get('default_download_path')}")
-            print(f"  2. Limit: {conf.get('download_limit')} KB/s")
-            print(f"  3. Auto-Open: {conf.get('auto_open_on_finish')}")
-            print(f"  4. Cache leeren")
-            print(f"  5. Auto-Refresh: {conf.get('refresh_rate')}s (0 = durchgehend)")
-            print("\n  0. Zurück")
+            c = self.config
+            l = c.get("language")
+            opts = [
+                f"Path: {c.get('default_download_path')}",
+                f"{self.t('limit')}: {c.get('download_limit')} KB/s",
+                f"Language: {l}",
+                "Clear Cache"
+            ]
             
-            c = self.ui.input("Wahl")
-            if c == '0': break
-            elif c == '1': 
-                p = self.ui.input("Pfad")
-                if p: conf.set("default_download_path", p)
-            elif c == '2':
-                l = self.ui.input("Limit")
-                if l.isdigit():
-                    conf.set("download_limit", int(l))
+            idx = self.ui.select_menu(self.t("settings"), opts)
+            if idx == -1: break
+            
+            if idx == 0:
+                root = tk.Tk(); root.withdraw(); root.attributes('-topmost', True)
+                p = filedialog.askdirectory()
+                root.destroy()
+                if p: c.set("default_download_path", p)
+            
+            if idx == 1:
+                self.ui.header()
+                inp = input("  New Limit (KB/s): ")
+                if inp.isdigit():
+                    c.set("download_limit", int(inp))
                     self.dm.update_limit()
-            elif c == '3':
-                curr = conf.get("auto_open_on_finish")
-                conf.set("auto_open_on_finish", not curr)
-            elif c == '4':
-                conf.clear_cache()
-                self.ui.message("Cache geleert")
-            elif c == '5':
-                r = self.ui.input("Sekunden")
-                if r.isdigit():
-                    conf.set("refresh_rate", int(r))
+            
+            if idx == 2:
+                new_lang = "de" if l == "en" else "en"
+                c.set("language", new_lang)
+            
+            if idx == 3:
+                c.clear_cache()
+                self.ui.message("Cache Cleared.")
