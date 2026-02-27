@@ -11,23 +11,83 @@ class UI:
         self.RED = "\033[91m"
         self.RESET = "\033[0m"
         
-        # Aktiviert ANSI Colors in Windows CMD
         os.system('')
+
+        # === ASCII ARTS ===
+        # Wir nutzen raw strings (r""), damit Backslashes nicht escapen
+        self.art = {
+            "main": r"""
+             ___________                                 __   
+  ____  _____\__    ___/_________________   ____   _____/  |_ 
+ /  _ \/  ___/ |    | /  _ \_  __ \_  __ \_/ __ \ /    \   __\
+(  <_> )___ \  |    |(  <_> )  | \/|  | \/\  ___/|   |  \  |  
+ \____/____  > |____| \____/|__|   |__|    \___  >___|  /__|  
+           \/                                  \/     \/      
+""",
+            "loading": r"""
+.____                     .___.__                           
+|    |    _________     __| _/|__| ____    ____             
+|    |   /  _ \__  \   / __ | |  |/    \  / ___\            
+|    |__(  <_> ) __ \_/ /_/ | |  |   |  \/ /_/  >           
+|_______ \____(____  /\____ | |__|___|  /\___  / /\  /\  /\ 
+        \/         \/      \/         \//_____/  \/  \/  \/ 
+""",
+            "settings": r"""
+  _________       __    __  .__                      
+ /   _____/ _____/  |__/  |_|__| ____    ____  ______
+ \_____  \_/ __ \   __\   __\  |/    \  / ___\/  ___/
+ /        \  ___/|  |  |  | |  |   |  \/ /_/  >___ \ 
+/_______  /\___  >__|  |__| |__|___|  /\___  /____  >
+        \/     \/                   \//_____/     \/ 
+""",
+            "dl_list": r"""
+________                      .__                    .___ .____    .__          __   
+\______ \   ______  _  ______ |  |   _________     __| _/ |    |   |__| _______/  |_ 
+ |    |  \ /  _ \ \/ \/ /    \|  |  /  _ \__  \   / __ |  |    |   |  |/  ___/\   __\
+ |    `   (  <_> )     /   |  \  |_(  <_> ) __ \_/ /_/ |  |    |___|  |\___ \  |  |  
+/_______  /\____/ \/\_/|___|  /____/\____(____  /\____ |  |_______ \__/____  > |__|  
+        \/                  \/                \/      \/          \/       \/        
+""",
+            "explore": r"""
+___________              .__                        
+\_   _____/__  _________ |  |   ___________   ____  
+ |    __)_\  \/  /\____ \|  |  /  _ \_  __ \_/ __ \ 
+ |        \>    < |  |_> >  |_(  <_> )  | \/\  ___/ 
+/_______  /__/\_ \|   __/|____/\____/|__|    \___  >
+        \/      \/|__|                           \/ 
+"""
+        }
 
     def clear(self):
         os.system('cls' if os.name == 'nt' else 'clear')
 
-    def header(self, title="osTorrent"):
+    def header(self, title="osTorrent", art_key=None):
+        """Zeigt Header an. Wenn art_key gesetzt ist, wird ASCII Art genutzt."""
         self.clear()
+        
+        # Wenn ein spezieller Key übergeben wurde (z.B. "settings")
+        if art_key and art_key in self.art:
+            print(self.CYAN + self.art[art_key] + self.RESET)
+            # Optional: Untertitel anzeigen, wenn er nicht Standard ist
+            if title != "osTorrent" and title != art_key:
+                print(f"  >> {title}")
+            print()
+            return
+
+        # Fallback: Standard Box Design für Untermenüs ohne eigenes Art
         print(self.CYAN + "+" + "=" * (self.width - 2) + "+")
         print("|" + title.center(self.width - 2) + "|")
         print("+" + "=" * (self.width - 2) + "+" + self.RESET)
         print()
 
+    def input(self, prompt):
+        try:
+            return input(f"{self.CYAN}  {prompt}: {self.RESET}").strip()
+        except: return ""
+
     def get_key(self):
-        """Liest einen einzelnen Tastendruck (blockierend)"""
         key = msvcrt.getch()
-        if key == b'\xe0': # Pfeiltasten senden erst e0
+        if key == b'\xe0':
             key = msvcrt.getch()
             if key == b'H': return 'up'
             if key == b'P': return 'down'
@@ -37,40 +97,36 @@ class UI:
         try: return key.decode('utf-8').lower()
         except: return None
 
-    def select_menu(self, title, options, exit_option=True):
-        """Zeigt ein Menü mit Pfeiltasten-Navigation"""
+    def wait_for_input(self, timeout):
+        import time
+        start = time.time()
+        while time.time() - start < timeout:
+            if msvcrt.kbhit():
+                return self.get_key()
+            time.sleep(0.05)
+        return None
+
+    def select_menu(self, title, options, exit_text="Back", art_key=None):
+        """Menü mit optionalem ASCII Art Key"""
         selected = 0
         while True:
-            self.header(title)
+            self.header(title, art_key)
             
             for i, option in enumerate(options):
-                prefix = "  "
-                color = self.RESET
-                if i == selected:
-                    prefix = "> "
-                    color = self.CYAN
-                
+                prefix, color = "  ", self.RESET
+                if i == selected: prefix, color = "> ", self.CYAN
                 print(f"{color}{prefix}{option}{self.RESET}")
             
-            if exit_option:
-                print()
-                prefix = "  "
-                color = self.RESET
-                if selected == len(options):
-                    prefix = "> "
-                    color = self.RED
-                print(f"{color}{prefix}[ Zurück / Exit ]{self.RESET}")
+            print()
+            prefix, color = "  ", self.RESET
+            if selected == len(options): prefix, color = "> ", self.RED
+            print(f"{color}{prefix}[ {exit_text} ]{self.RESET}")
 
-            # Input Handling
             key = self.get_key()
-            if key == 'up':
-                selected = max(0, selected - 1)
-            elif key == 'down':
-                limit = len(options) if exit_option else len(options) - 1
-                selected = min(limit, selected + 1)
+            if key == 'up': selected = max(0, selected - 1)
+            elif key == 'down': selected = min(len(options), selected + 1)
             elif key == 'enter':
-                if exit_option and selected == len(options):
-                    return -1
+                if selected == len(options): return -1
                 return selected
 
     def print_torrent(self, idx, t):
@@ -87,21 +143,13 @@ class UI:
             h, m = divmod(m, 60)
             eta_str = f"{h}h {m}m"
 
-        icon = "[?]"
-        color = self.RESET
-        if t.state_str == "Downloading": 
-            icon = "[DL]"
-            color = self.GREEN
-        elif t.state_str == "Complete": 
-            icon = "[OK]"
-            color = self.CYAN
-        elif t.state_str == "Paused": 
-            icon = "[||]"
-            color = self.YELLOW
+        icon, color = "[?]", self.RESET
+        if t.state_str == "Downloading": icon, color = "[DL]", self.GREEN
+        elif t.state_str == "Complete": icon, color = "[OK]", self.CYAN
+        elif t.state_str == "Paused": icon, color = "[||]", self.YELLOW
 
         print(f"  {color}{icon} {t.name}{self.RESET}")
         print(f"      {bar} ({t.progress:.1f}%)")
-        
         if t.state_str in ["Downloading", "Metadata"]:
             print(f"      {speed_str} | ETA: {eta_str}")
         else:
@@ -114,9 +162,8 @@ class UI:
         msvcrt.getch()
 
     def confirm(self, question):
-        """Fragt J/N ab (ohne Enter)"""
         print(f"\n  {self.YELLOW}{question} (J/N){self.RESET}")
         while True:
             key = self.get_key()
             if key == 'j' or key == 'y': return True
-            if key == 'n': return False
+            if key == 'n': return False  

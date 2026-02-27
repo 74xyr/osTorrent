@@ -33,11 +33,8 @@ class DownloadManager:
             base_path = Path(__file__).parent
             
         self.aria2_path = str(base_path / "server" / "aria2c.exe")
-        
-        # Session File für Resume Support
         self.session_file = Path(os.getenv('LOCALAPPDATA')) / "osTorrent" / "session.txt"
-        if not self.session_file.exists():
-            self.session_file.touch()
+        if not self.session_file.exists(): self.session_file.touch()
 
         self._start_aria2_daemon()
         self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
@@ -45,34 +42,21 @@ class DownloadManager:
 
     def _start_aria2_daemon(self):
         if not os.path.exists(self.aria2_path): return
-
         cmd = [
-            self.aria2_path,
-            "--enable-rpc=true",
-            "--rpc-listen-all=false",
-            "--rpc-allow-origin-all=true",
-            "--rpc-listen-port=6800",
-            "--max-connection-per-server=16",
-            "--seed-time=0",
-            "--quiet=true",
-            "--follow-torrent=mem",
-            f"--input-file={self.session_file}", # Session laden
-            f"--save-session={self.session_file}", # Session speichern
-            "--save-session-interval=30"
+            self.aria2_path, "--enable-rpc=true", "--rpc-listen-all=false",
+            "--rpc-allow-origin-all=true", "--rpc-listen-port=6800",
+            "--max-connection-per-server=16", "--seed-time=0", "--quiet=true",
+            "--follow-torrent=mem", f"--input-file={self.session_file}",
+            f"--save-session={self.session_file}", "--save-session-interval=30"
         ]
-        
         limit = self.config.get("download_limit")
         if limit > 0: cmd.append(f"--max-download-limit={limit}K")
-
         startupinfo = None
         if os.name == 'nt':
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            
-        self.aria2_process = subprocess.Popen(
-            cmd, startupinfo=startupinfo,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        )
+        self.aria2_process = subprocess.Popen(cmd, startupinfo=startupinfo,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(1)
         try:
             self.rpc = xmlrpc.client.ServerProxy("http://localhost:6800/rpc")
@@ -80,18 +64,13 @@ class DownloadManager:
         except: pass
 
     def is_downloading(self):
-        """Prüft ob aktive Downloads laufen"""
         if not self.rpc: return False
-        try:
-            active = self.rpc.aria2.tellActive(["gid"])
-            return len(active) > 0
+        try: return len(self.rpc.aria2.tellActive(["gid"])) > 0
         except: return False
 
     def add_magnet(self, magnet_link, save_path):
         if not self.rpc: return None
-        try:
-            gid = self.rpc.aria2.addUri([magnet_link], {"dir": save_path})
-            return gid
+        try: return self.rpc.aria2.addUri([magnet_link], {"dir": save_path})
         except: return None
 
     def pause_torrent(self, gid):
@@ -109,8 +88,7 @@ class DownloadManager:
 
     def clear_finished(self):
         if not self.rpc: return
-        with self.lock:
-            current_gids = list(self.torrents.keys())
+        with self.lock: current_gids = list(self.torrents.keys())
         for gid in current_gids:
             t = self.torrents[gid]
             if t.state_str in ["Complete", "Removed", "Error"]:
@@ -123,6 +101,11 @@ class DownloadManager:
         limit_str = f"{limit}K" if limit > 0 else "0"
         self.rpc.aria2.changeGlobalOption({"max-download-limit": limit_str})
 
+    def get_all_torrents(self):
+        """Gibt eine Kopie der aktuellen Torrents zurück"""
+        with self.lock:
+            return self.torrents.copy()
+
     def _monitor_loop(self):
         keys = ["gid", "status", "totalLength", "completedLength", "downloadSpeed", "dir", "bittorrent", "followedBy"]
         while self.running:
@@ -133,46 +116,27 @@ class DownloadManager:
                 active = self.rpc.aria2.tellActive(keys)
                 waiting = self.rpc.aria2.tellWaiting(0, 100, keys)
                 stopped = self.rpc.aria2.tellStopped(0, 100, keys)
-                
                 all_downloads = active + waiting + stopped
                 current_torrents = {}
-                
                 for d in all_downloads:
-                    gid = d['gid']
-                    status_raw = d['status']
-                    
+                    gid, status_raw = d['gid'], d['status']
                     is_meta_artifact = 'followedBy' in d
                     name = "Unbekannt / Metadata"
                     if 'bittorrent' in d and 'info' in d['bittorrent']:
                         name = d['bittorrent']['info'].get('name', name)
-                    
                     if status_raw == 'complete' and name == "Unbekannt / Metadata": is_meta_artifact = True
-
                     if status_raw == 'complete' and is_meta_artifact:
                         try: self.rpc.aria2.removeDownloadResult(gid)
                         except: pass
-                        continue 
-                    
-                    total = int(d['totalLength'])
-                    done = int(d['completedLength'])
-                    speed = int(d['downloadSpeed'])
+                        continue
+                    total, done, speed = int(d['totalLength']), int(d['completedLength']), int(d['downloadSpeed'])
                     progress = (done / total) * 100 if total > 0 else 0.0
-                    
                     state_str = status_raw.capitalize()
                     if status_raw == 'active' and total == 0: state_str = "Metadata"
                     elif status_raw == 'active': state_str = "Downloading"
-                    
                     eta = int((total - done) / speed) if speed > 0 and total > done else 0
-                        
-                    current_torrents[gid] = TorrentData(
-                        gid=gid, name=name, progress=progress,
-                        state_str=state_str, download_speed=speed,
-                        eta=eta, save_path=d['dir'], total_size=total
-                    )
-                    
-                    if status_raw == "complete" and self.config.get("auto_open_on_finish"):
-                         pass
-
+                    current_torrents[gid] = TorrentData(gid, name, progress, state_str, speed, eta, d['dir'], total)
+                    if status_raw == "complete" and self.config.get("auto_open_on_finish"): pass
                 with self.lock: self.torrents = current_torrents
             except: pass
             time.sleep(1)
@@ -186,7 +150,6 @@ class DownloadManager:
     def shutdown(self):
         self.running = False
         if self.rpc:
-            try: self.rpc.aria2.saveSession() # WICHTIG: Session speichern
+            try: self.rpc.aria2.saveSession()
             except: pass
-        if self.aria2_process:
-            self.aria2_process.terminate()
+        if self.aria2_process: self.aria2_process.terminate()
