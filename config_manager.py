@@ -2,6 +2,7 @@ import json
 import os
 import shutil
 import time
+import sys
 from pathlib import Path
 
 class ConfigManager:
@@ -11,14 +12,14 @@ class ConfigManager:
         self.config_file = self.app_data / "config.json"
         self.seen_file = self.app_data / "seen_torrents.json"
         
-        # Standardwerte
         self.default_config = {
-            "language": "",  # "en" oder "de"
+            "language": "",
             "default_download_path": str(Path.home() / "Downloads"),
             "download_limit": 0,
             "auto_open_on_finish": False,
             "refresh_rate": 3,
-            "first_run": True
+            "first_run": True,
+            "installed": False # Neu: Merkt sich ob installiert
         }
         
         self.config = self._load_config()
@@ -38,7 +39,6 @@ class ConfigManager:
         return self.default_config.copy()
 
     def _load_seen(self):
-        """Lädt Liste gesehener Torrents für das 'NEW' Tag"""
         if self.seen_file.exists():
             try:
                 with open(self.seen_file, 'r', encoding='utf-8') as f:
@@ -64,28 +64,32 @@ class ConfigManager:
         self.save()
 
     def mark_torrent_seen(self, magnet):
-        """Markiert einen Torrent als gesehen mit Timestamp"""
         import hashlib
-        # Kurzer Hash als ID
         h = hashlib.md5(magnet.encode()).hexdigest()
         if h not in self.seen_torrents:
             self.seen_torrents[h] = time.time()
             self.save_seen()
     
     def is_torrent_new(self, magnet):
-        """Prüft ob Torrent neuer als 6 Stunden ist"""
         import hashlib
         h = hashlib.md5(magnet.encode()).hexdigest()
         if h not in self.seen_torrents:
             self.mark_torrent_seen(magnet)
-            return True # Ganz neu
-        
-        first_seen = self.seen_torrents[h]
-        # 6 Stunden = 6 * 60 * 60 = 21600 Sekunden
-        if time.time() - first_seen < 21600:
+            return True
+        if time.time() - self.seen_torrents[h] < 21600:
             return True
         return False
 
     def clear_cache(self):
-        # Hier könnten wir temporäre Files löschen
-        pass
+        """Löscht alles in AppData/osTorrent und startet neu"""
+        try:
+            # Wir können den Ordner nicht löschen während wir drin sind/loggen
+            # Also löschen wir nur den Inhalt außer der Exe selbst (falls sie dort läuft)
+            for item in self.app_data.iterdir():
+                if item.is_file():
+                    if item.name != "osTorrent.exe" and item.name != "aria2c.exe":
+                        item.unlink()
+                elif item.is_dir():
+                    shutil.rmtree(item)
+            return True
+        except: return False
