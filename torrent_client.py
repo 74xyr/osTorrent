@@ -3,6 +3,7 @@ import time
 import os
 import requests
 import msvcrt
+import threading
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog
@@ -13,18 +14,37 @@ from download_manager import DownloadManager
 
 class TorrentClient:
     def __init__(self):
-        if getattr(sys, 'frozen', False): base_path = Path(sys._MEIPASS)
-        else: base_path = Path(__file__).parent
+        # 1. Pfad Logik (PyInstaller vs Skript)
+        if getattr(sys, 'frozen', False):
+            base_path = Path(sys._MEIPASS)
+        else:
+            base_path = Path(__file__).parent
         
+        # Check Aria2c
         exe_path = base_path / "server" / "aria2c.exe"
-        if not exe_path.exists(): exe_path = base_path / "aria2c.exe"
+        if not exe_path.exists():
+            # Fallback
+            exe_path = base_path / "aria2c.exe"
         
-        if not exe_path.exists(): sys.exit(1)
+        if not exe_path.exists():
+            print("CRITICAL: Aria2c missing. Please run build setup.")
+            sys.exit(1)
 
+        # 2. Module laden
         self.ui = UI()
         self.config = ConfigManager()
         self.dm = DownloadManager(self.config)
         
+        # 3. Server Verbindung (Live User Count)
+        self.api_url = "http://5.231.29.228/heartbeat"
+        self.online_users = 1
+        self.stop_threads = False
+        
+        # Startet den Ping im Hintergrund
+        self.ping_thread = threading.Thread(target=self._online_heartbeat, daemon=True)
+        self.ping_thread.start()
+
+        # 4. Sprachen
         self.txt = {
             "en": {
                 "dl_torrent": "Download Torrent",
@@ -58,7 +78,8 @@ class TorrentClient:
                 "nav_hint": "Use arrowkeys and enter to navigate",
                 "setup_path_q": "Pick ur Path...",
                 "explorer_closed": "Explorer got closed...",
-                "path_fallback": "Default Path got selected, you can change it in Settings."
+                "path_fallback": "Default Path got selected, you can change it in Settings.",
+                "users_online": "Users Online"
             },
             "de": {
                 "dl_torrent": "Torrent herunterladen",
@@ -92,7 +113,8 @@ class TorrentClient:
                 "nav_hint": "Benutze Pfeiltasten und Enter zum Navigieren",
                 "setup_path_q": "Wähle deinen Pfad...",
                 "explorer_closed": "Explorer wurde geschlossen...",
-                "path_fallback": "Standard Pfad gewählt, du kannst es in den Settings ändern."
+                "path_fallback": "Standard Pfad gewählt, du kannst es in den Settings ändern.",
+                "users_online": "Nutzer Online"
             }
         }
 
@@ -100,6 +122,22 @@ class TorrentClient:
         lang = self.config.get("language")
         if not lang: lang = "en"
         return self.txt.get(lang, self.txt["en"]).get(key, key)
+
+    def _online_heartbeat(self):
+        """Sendet alle 60 Sekunden ein Signal an den Server"""
+        while not self.stop_threads:
+            try:
+                resp = requests.get(self.api_url, timeout=3)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    self.online_users = data.get("online", 1)
+            except:
+                pass # Silent fail bei Internet-Problemen
+            
+            # 60x1 Sekunde warten (reagiert schneller auf stop)
+            for _ in range(60):
+                if self.stop_threads: return
+                time.sleep(1)
 
     def run(self):
         if self.config.get("first_run"): self.setup()
@@ -109,6 +147,8 @@ class TorrentClient:
                 break
             except KeyboardInterrupt:
                 if self.check_exit(): break
+        
+        self.stop_threads = True
         self.dm.shutdown()
 
     def check_exit(self):
@@ -177,8 +217,12 @@ class TorrentClient:
             explore_title = self.t("explore")
             options = [self.t("dl_torrent"), explore_title, self.t("dl_list"), self.t("settings")]
             
+            # Anzeige der Online User unten im Menü
+            user_text = f"{self.ui.GREEN}● {self.online_users} {self.t('users_online')}{self.ui.RESET}"
+            hint_text = f"{user_text}  |  {self.t('nav_hint')}"
+            
             idx = self.ui.select_menu("osTorrent", options, exit_text="EXIT", 
-                                    art_key="main", hint=self.t("nav_hint"), animate_hint=True)
+                                    art_key="main", hint=hint_text, animate_hint=False)
             
             if idx == -1:
                 if self.check_exit(): break
