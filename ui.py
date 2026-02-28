@@ -69,19 +69,17 @@ ___________              .__
     def _set_icon(self):
         try:
             if getattr(sys, 'frozen', False):
+                # Erlaubt das Pinning an die Taskleiste mit korrektem Icon
                 ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("osTorrent.App.1.0")
         except: pass
 
     def clear(self):
-        """Löscht den kompletten Screen (langsam, verursacht Flackern)"""
         os.system('cls' if os.name == 'nt' else 'clear')
 
     def reset_cursor(self):
-        """Setzt Cursor nach oben links (schnell, kein Flackern)"""
         print("\033[H", end="")
 
     def clear_rest(self):
-        """Löscht alles ab dem Cursor bis zum Ende des Screens"""
         print("\033[J", end="")
 
     def type_text(self, text, speed=0.02, color="", end="\n"):
@@ -93,7 +91,7 @@ ___________              .__
 
     def header(self, title="osTorrent", art_key=None, clear=True):
         if clear: 
-            self.clear() # Nur nutzen wenn wirklich neuer Screen nötig
+            self.clear() 
         
         if art_key and art_key in self.art:
             print(self.CYAN + self.art[art_key] + self.RESET)
@@ -135,25 +133,36 @@ ___________              .__
         return None
 
     def select_menu(self, title, options, exit_text="Back", art_key=None, hint=None, animate_hint=False):
-        """Menü mit Flicker-Free Navigation"""
         selected = 0
         first_render = True
-        
-        # 1. Einmalig Screen löschen
         self.clear()
         
         while True:
-            # 2. Cursor zurücksetzen (Statt Screen löschen)
             self.reset_cursor()
-            
-            # 3. Header malen (ohne clear)
             self.header(title, art_key, clear=False)
             
-            for i, option in enumerate(options):
+            # Pagination Logic falls Liste zu lang wird
+            max_visible = 10
+            start_idx = 0
+            end_idx = len(options)
+            
+            if len(options) > max_visible:
+                if selected >= max_visible:
+                    start_idx = selected - max_visible + 1
+                end_idx = start_idx + max_visible
+
+            if start_idx > 0:
+                print(f"  {self.YELLOW}  ^ ... {self.RESET}")
+
+            for i in range(start_idx, end_idx):
+                option = options[i]
                 prefix, color = "  ", self.RESET
                 if i == selected: prefix, color = "> ", self.CYAN
-                # Wir fügen Leerzeichen am Ende hinzu, um Reste alter Texte zu überschreiben
-                print(f"{color}{prefix}{option:<60}{self.RESET}")
+                # Schneidet zu lange Texte ab, damit UI nicht bricht
+                print(f"{color}{prefix}{option[:65]:<65}{self.RESET}")
+            
+            if end_idx < len(options):
+                print(f"  {self.YELLOW}  v ... {self.RESET}")
             
             print()
             prefix, color = "  ", self.RESET
@@ -167,9 +176,7 @@ ___________              .__
                 else:
                     print(f"  {self.CYAN}{hint}{self.RESET}")
 
-            # 4. Reste löschen (falls Menü kürzer wurde)
             self.clear_rest()
-
             first_render = False
             key = self.get_key()
             
@@ -184,6 +191,7 @@ ___________              .__
     def print_torrent(self, idx, t):
         bar_len = 25
         filled = int(bar_len * t.progress / 100)
+        filled = max(0, min(bar_len, filled)) # Safety clamp
         bar = "+" * filled + "-" * (bar_len - filled)
         
         speed_str = f"{t.download_speed/1024:.1f} KB/s"
@@ -197,9 +205,9 @@ ___________              .__
             if d > 0: eta_str = f"{d}d {h}h"
             elif h > 0: eta_str = f"{h}h {m}m"
             else: eta_str = f"{m}m {s}s"
-        elif t.download_speed == 0:
+        elif t.download_speed == 0 and t.state_str == "Downloading":
             eta_str = "∞"
-        elif t.progress >= 100:
+        elif t.progress >= 100 or t.state_str == "Complete":
             eta_str = "Done"
 
         icon, color = "[?]", self.RESET
@@ -207,8 +215,11 @@ ___________              .__
         elif t.state_str == "Complete": icon, color = "[OK]", self.CYAN
         elif t.state_str == "Paused": icon, color = "[||]", self.YELLOW
         elif t.state_str == "Error": icon, color = "[ER]", self.RED
+        elif t.state_str == "Queued": icon, color = "[Q]", self.YELLOW
 
-        print(f"  {color}{icon} {t.name}{self.RESET}")
+        # Name kürzen
+        name_display = (t.name[:60] + '..') if len(t.name) > 60 else t.name
+        print(f"  {color}{icon} {name_display}{self.RESET}")
         
         if t.state_str == "Error":
             print(f"      {self.RED}{t.error_msg}{self.RESET}")
