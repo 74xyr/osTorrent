@@ -208,3 +208,37 @@ ___________              .__
             key = self.get_key()
             if key == 'j' or key == 'y': return True
             if key == 'n': return False
+
+    def print_torrent(self, idx, t):
+        bar_len = 25
+        filled = int(bar_len * t.progress / 100)
+        bar = "+" * filled + "-" * (bar_len - filled)
+        
+        speed_str = f"{t.download_speed/1024:.1f} KB/s"
+        if t.download_speed > 1024: speed_str = f"{t.download_speed/1048576:.1f} MB/s"
+        
+        eta_str = "∞"
+        if t.eta > 0:
+            m, s = divmod(t.eta, 60)
+            h, m = divmod(m, 60)
+            eta_str = f"{h}h {m}m"
+
+        icon, color = "[?]", self.RESET
+        if t.state_str == "Downloading": icon, color = "[DL]", self.GREEN
+        elif t.state_str == "Complete": icon, color = "[OK]", self.CYAN
+        elif t.state_str == "Paused": icon, color = "[||]", self.YELLOW
+        elif t.state_str == "Error": icon, color = "[ER]", self.RED
+
+        print(f"  {color}{icon} {t.name}{self.RESET}")
+        
+        # Falls Error: Zeige die Fehlermeldung statt Progressbar
+        if t.state_str == "Error":
+            print(f"      {self.RED}{t.error_msg}{self.RESET}")
+        else:
+            print(f"      {bar} ({t.progress:.1f}%)")
+            
+            if t.state_str in ["Downloading", "Metadata"]:
+                print(f"      {speed_str} | ETA: {eta_str}")
+            else:
+                print(f"      Status: {t.state_str}")
+        print()
