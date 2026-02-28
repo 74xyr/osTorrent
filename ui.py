@@ -13,7 +13,8 @@ class UI:
         self.RED = "\033[91m"
         self.RESET = "\033[0m"
         
-        os.system('')
+        # WINDOWS 10 FIX: Farben aktivieren
+        self._enable_windows_10_ansi()
         os.system('title osTorrent')
         self._set_icon()
 
@@ -60,17 +61,19 @@ ___________              .__
 """
         }
 
-    def _set_icon(self):
-        """Setzt das Icon für Taskleiste und Fenster"""
+    def _enable_windows_10_ansi(self):
+        """Zwingt Windows 10, Farben korrekt darzustellen"""
         try:
-            myappid = 'acay.ostorrent.client.1.0'
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
-            
+            kernel32 = ctypes.windll.kernel32
+            kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
+        except:
+            os.system('') # Fallback für neuere Win10 Versionen
+
+    def _set_icon(self):
+        try:
             if getattr(sys, 'frozen', False):
-                kernel32 = ctypes.windll.kernel32
-                hwnd = kernel32.GetConsoleWindow()
-                
-                pass 
+                # AppID verhindert, dass Windows das Icon gruppiert/versteckt
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("osTorrent.App.1.0")
         except: pass
 
     def clear(self):
