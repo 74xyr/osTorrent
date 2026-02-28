@@ -9,7 +9,7 @@ import shutil
 from pathlib import Path
 from dataclasses import dataclass
 
-# Die besten Public Tracker (Booster für Magnet Links)
+# Tracker Booster Liste (Beschleunigt Magnet-Links extrem)
 PUBLIC_TRACKERS = [
     "udp://tracker.opentrackr.org:1337/announce",
     "udp://open.demonii.com:1337/announce",
@@ -33,7 +33,7 @@ class TorrentData:
     eta: int
     save_path: str
     total_size: int
-    error_msg: str = "" # Neu: Fehlermeldung
+    error_msg: str = ""
 
 class DownloadManager:
     def __init__(self, config):
@@ -44,40 +44,51 @@ class DownloadManager:
         self.lock = threading.Lock()
         self.torrents = {}
         
+        # 1. Pfade definieren (AppData für saubere Installation)
         self.app_data = Path(os.getenv('LOCALAPPDATA')) / "osTorrent"
         self.aria2_local_path = self.app_data / "aria2c.exe"
         self.session_file = self.app_data / "session.txt"
         
+        # 2. Ordner und Session erstellen
         self.app_data.mkdir(parents=True, exist_ok=True)
         if not self.session_file.exists(): 
             try: self.session_file.touch()
             except: pass
 
+        # 3. Engine installieren (aus der Exe entpacken)
         self._install_engine()
 
-        # Kill old instances
+        # 4. Alte Prozesse killen (Verhindert Konflikte)
         subprocess.run("taskkill /F /IM aria2c.exe", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
 
+        # 5. Starten (Mit Retry & Firewall Fix)
         if not self._start_aria2_daemon():
             self._add_firewall_rule()
             self._start_aria2_daemon()
 
+        # 6. Monitor starten
         self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self.monitor_thread.start()
 
     def _install_engine(self):
+        """Kopiert aria2c.exe einmalig in den AppData Ordner"""
         if self.aria2_local_path.exists(): return
         try:
-            if getattr(sys, 'frozen', False): base_path = Path(sys._MEIPASS)
-            else: base_path = Path(__file__).parent
+            if getattr(sys, 'frozen', False):
+                base_path = Path(sys._MEIPASS)
+            else:
+                base_path = Path(__file__).parent
             
             source_path = base_path / "server" / "aria2c.exe"
+            # Fallback für Dev-Umgebung
             if not source_path.exists(): source_path = base_path / "aria2c.exe"
 
-            if source_path.exists(): shutil.copy2(source_path, self.aria2_local_path)
+            if source_path.exists():
+                shutil.copy2(source_path, self.aria2_local_path)
         except: pass
 
     def _add_firewall_rule(self):
+        """Versucht silent eine Firewall-Regel hinzuzufügen"""
         try:
             cmd = f"New-NetFirewallRule -Program '{self.aria2_local_path}' -Action Allow -Profile Domain,Private,Public -DisplayName 'osTorrent Engine'"
             subprocess.run(["powershell", "-Command", cmd], creationflags=0x08000000)
@@ -100,9 +111,9 @@ class DownloadManager:
             "--max-connection-per-server=16",
             "--seed-time=0",
             "--quiet=true",
-            "--follow-torrent=mem",
+            "--follow-torrent=mem",     # Behält Downloads im RAM
             "--bt-enable-lpd=true",     # Local Peer Discovery
-            "--enable-dht=true",        # DHT aktivieren (Wichtig!)
+            "--enable-dht=true",        # DHT
             "--dht-listen-port=6881",
             f"--input-file={self.session_file}",
             f"--save-session={self.session_file}",
@@ -124,6 +135,7 @@ class DownloadManager:
             )
         except: return False
         
+        # Warte bis RPC Port erreichbar ist
         for _ in range(10):
             if self._is_port_open(6800):
                 try:
@@ -140,13 +152,13 @@ class DownloadManager:
         except: return False
 
     def add_magnet(self, magnet_link, save_path):
+        """Fügt Torrent hinzu inkl. Tracker Booster"""
         if not self.rpc: self._start_aria2_daemon()
         if not self.rpc: return None
         try:
-            # OPTIMIERUNG: Tracker hinzufügen + Pfad erzwingen
             options = {
-                "dir": str(Path(save_path).absolute()), # Absoluter Pfad ist sicherer
-                "bt-tracker": ",".join(PUBLIC_TRACKERS) # Tracker Booster
+                "dir": str(Path(save_path).absolute()),
+                "bt-tracker": ",".join(PUBLIC_TRACKERS)
             }
             return self.rpc.aria2.addUri([magnet_link], options)
         except: return None
@@ -183,39 +195,56 @@ class DownloadManager:
         with self.lock: return self.torrents.copy()
 
     def _monitor_loop(self):
-        # Wir fragen jetzt auch errorCode und errorMessage ab
+        """Haupt-Loop für Status-Updates"""
         keys = ["gid", "status", "totalLength", "completedLength", "downloadSpeed", 
                 "dir", "bittorrent", "followedBy", "errorCode", "errorMessage"]
         fail_count = 0
         
         while self.running:
             if not self.rpc:
-                time.sleep(1)
+                time.sleep(0.5)
                 continue
                 
             try:
+                # Wir holen ALLE Listen (Active, Waiting, Stopped)
+                # Das garantiert sofortige Sichtbarkeit
                 active = self.rpc.aria2.tellActive(keys)
-                fail_count = 0
-                
                 waiting = self.rpc.aria2.tellWaiting(0, 100, keys)
                 stopped = self.rpc.aria2.tellStopped(0, 100, keys)
+                
                 all_downloads = active + waiting + stopped
                 current_torrents = {}
+                fail_count = 0
                 
                 for d in all_downloads:
                     gid, status_raw = d['gid'], d['status']
                     
-                    is_meta_artifact = 'followedBy' in d
+                    # === INTELLIGENTES CLEANUP ===
+                    
+                    # 1. Duplikate löschen (Error 12)
+                    if d.get('errorCode') == '12':
+                        try: self.rpc.aria2.removeDownloadResult(gid)
+                        except: pass
+                        continue
+
+                    # 2. Metadaten-Artefakte erkennen
+                    is_meta_artifact = False
+                    if 'followedBy' in d: is_meta_artifact = True
+                        
                     name = "Unbekannt / Metadata"
                     if 'bittorrent' in d and 'info' in d['bittorrent']:
                         name = d['bittorrent']['info'].get('name', name)
                     
-                    if status_raw == 'complete' and name == "Unbekannt / Metadata": is_meta_artifact = True
+                    if name == "Unbekannt / Metadata" and status_raw in ['complete', 'error', 'removed']:
+                        is_meta_artifact = True
 
-                    if status_raw == 'complete' and is_meta_artifact:
+                    # Artefakte aus der Liste entfernen
+                    if is_meta_artifact and status_raw in ['complete', 'error', 'removed']:
                         try: self.rpc.aria2.removeDownloadResult(gid)
                         except: pass
                         continue 
+                    
+                    # === STATUS BERECHNUNG ===
                     
                     total = int(d['totalLength'])
                     done = int(d['completedLength'])
@@ -227,10 +256,11 @@ class DownloadManager:
 
                     if status_raw == 'active' and total == 0: state_str = "Metadata"
                     elif status_raw == 'active': state_str = "Downloading"
+                    elif status_raw == 'waiting': state_str = "Queued" # Warteschlange
+                    elif status_raw == 'paused': state_str = "Paused"
                     elif status_raw == 'error':
-                        # Error Message auslesen
-                        err_code = d.get('errorCode', '0')
-                        err_text = d.get('errorMessage', 'Unknown Error')
+                        err_code = d.get('errorCode', '?')
+                        err_text = d.get('errorMessage', 'Unknown')
                         state_str = "Error"
                         error_msg = f"Code {err_code}: {err_text}"
                     
@@ -253,7 +283,7 @@ class DownloadManager:
                     self._start_aria2_daemon()
                     fail_count = 0
             
-            time.sleep(1)
+            time.sleep(0.5) # Schnelles Update für "direktes" Feeling
 
     def open_folder(self, path):
         try:

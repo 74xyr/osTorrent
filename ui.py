@@ -13,7 +13,6 @@ class UI:
         self.RED = "\033[91m"
         self.RESET = "\033[0m"
         
-        # WINDOWS 10 FIX: Farben aktivieren
         self._enable_windows_10_ansi()
         os.system('title osTorrent')
         self._set_icon()
@@ -62,22 +61,28 @@ ___________              .__
         }
 
     def _enable_windows_10_ansi(self):
-        """Zwingt Windows 10, Farben korrekt darzustellen"""
         try:
             kernel32 = ctypes.windll.kernel32
             kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
-        except:
-            os.system('') # Fallback für neuere Win10 Versionen
+        except: os.system('')
 
     def _set_icon(self):
         try:
             if getattr(sys, 'frozen', False):
-                # AppID verhindert, dass Windows das Icon gruppiert/versteckt
                 ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("osTorrent.App.1.0")
         except: pass
 
     def clear(self):
+        """Löscht den kompletten Screen (langsam, verursacht Flackern)"""
         os.system('cls' if os.name == 'nt' else 'clear')
+
+    def reset_cursor(self):
+        """Setzt Cursor nach oben links (schnell, kein Flackern)"""
+        print("\033[H", end="")
+
+    def clear_rest(self):
+        """Löscht alles ab dem Cursor bis zum Ende des Screens"""
+        print("\033[J", end="")
 
     def type_text(self, text, speed=0.02, color="", end="\n"):
         print(color, end="")
@@ -87,7 +92,8 @@ ___________              .__
         print(self.RESET, end=end)
 
     def header(self, title="osTorrent", art_key=None, clear=True):
-        if clear: self.clear()
+        if clear: 
+            self.clear() # Nur nutzen wenn wirklich neuer Screen nötig
         
         if art_key and art_key in self.art:
             print(self.CYAN + self.art[art_key] + self.RESET)
@@ -129,16 +135,25 @@ ___________              .__
         return None
 
     def select_menu(self, title, options, exit_text="Back", art_key=None, hint=None, animate_hint=False):
+        """Menü mit Flicker-Free Navigation"""
         selected = 0
         first_render = True
         
+        # 1. Einmalig Screen löschen
+        self.clear()
+        
         while True:
-            self.header(title, art_key, clear=True)
+            # 2. Cursor zurücksetzen (Statt Screen löschen)
+            self.reset_cursor()
+            
+            # 3. Header malen (ohne clear)
+            self.header(title, art_key, clear=False)
             
             for i, option in enumerate(options):
                 prefix, color = "  ", self.RESET
                 if i == selected: prefix, color = "> ", self.CYAN
-                print(f"{color}{prefix}{option}{self.RESET}")
+                # Wir fügen Leerzeichen am Ende hinzu, um Reste alter Texte zu überschreiben
+                print(f"{color}{prefix}{option:<60}{self.RESET}")
             
             print()
             prefix, color = "  ", self.RESET
@@ -151,6 +166,9 @@ ___________              .__
                     self.type_text(f"  {hint}", color=self.CYAN, speed=0.03)
                 else:
                     print(f"  {self.CYAN}{hint}{self.RESET}")
+
+            # 4. Reste löschen (falls Menü kürzer wurde)
+            self.clear_rest()
 
             first_render = False
             key = self.get_key()
@@ -171,23 +189,35 @@ ___________              .__
         speed_str = f"{t.download_speed/1024:.1f} KB/s"
         if t.download_speed > 1024: speed_str = f"{t.download_speed/1048576:.1f} MB/s"
         
-        eta_str = "∞"
-        if t.eta > 0:
+        eta_str = "Calculating..."
+        if t.eta > 0 and t.eta < 31536000:
             m, s = divmod(t.eta, 60)
             h, m = divmod(m, 60)
-            eta_str = f"{h}h {m}m"
+            d, h = divmod(h, 24)
+            if d > 0: eta_str = f"{d}d {h}h"
+            elif h > 0: eta_str = f"{h}h {m}m"
+            else: eta_str = f"{m}m {s}s"
+        elif t.download_speed == 0:
+            eta_str = "∞"
+        elif t.progress >= 100:
+            eta_str = "Done"
 
         icon, color = "[?]", self.RESET
         if t.state_str == "Downloading": icon, color = "[DL]", self.GREEN
         elif t.state_str == "Complete": icon, color = "[OK]", self.CYAN
         elif t.state_str == "Paused": icon, color = "[||]", self.YELLOW
+        elif t.state_str == "Error": icon, color = "[ER]", self.RED
 
         print(f"  {color}{icon} {t.name}{self.RESET}")
-        print(f"      {bar} ({t.progress:.1f}%)")
-        if t.state_str in ["Downloading", "Metadata"]:
-            print(f"      {speed_str} | ETA: {eta_str}")
+        
+        if t.state_str == "Error":
+            print(f"      {self.RED}{t.error_msg}{self.RESET}")
         else:
-            print(f"      Status: {t.state_str}")
+            print(f"      {bar} ({t.progress:.1f}%)")
+            if t.state_str in ["Downloading", "Metadata"]:
+                print(f"      {speed_str} | ETA: {eta_str}")
+            else:
+                print(f"      Status: {t.state_str}")
         print()
 
     def message(self, msg, color="", animate=True):
@@ -208,37 +238,3 @@ ___________              .__
             key = self.get_key()
             if key == 'j' or key == 'y': return True
             if key == 'n': return False
-
-    def print_torrent(self, idx, t):
-        bar_len = 25
-        filled = int(bar_len * t.progress / 100)
-        bar = "+" * filled + "-" * (bar_len - filled)
-        
-        speed_str = f"{t.download_speed/1024:.1f} KB/s"
-        if t.download_speed > 1024: speed_str = f"{t.download_speed/1048576:.1f} MB/s"
-        
-        eta_str = "∞"
-        if t.eta > 0:
-            m, s = divmod(t.eta, 60)
-            h, m = divmod(m, 60)
-            eta_str = f"{h}h {m}m"
-
-        icon, color = "[?]", self.RESET
-        if t.state_str == "Downloading": icon, color = "[DL]", self.GREEN
-        elif t.state_str == "Complete": icon, color = "[OK]", self.CYAN
-        elif t.state_str == "Paused": icon, color = "[||]", self.YELLOW
-        elif t.state_str == "Error": icon, color = "[ER]", self.RED
-
-        print(f"  {color}{icon} {t.name}{self.RESET}")
-        
-        # Falls Error: Zeige die Fehlermeldung statt Progressbar
-        if t.state_str == "Error":
-            print(f"      {self.RED}{t.error_msg}{self.RESET}")
-        else:
-            print(f"      {bar} ({t.progress:.1f}%)")
-            
-            if t.state_str in ["Downloading", "Metadata"]:
-                print(f"      {speed_str} | ETA: {eta_str}")
-            else:
-                print(f"      Status: {t.state_str}")
-        print()

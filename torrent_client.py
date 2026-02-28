@@ -14,12 +14,9 @@ from download_manager import DownloadManager
 
 class TorrentClient:
     def __init__(self):
-        # Wir prüfen nur noch, ob wir grundsätzlich in der Exe oder Dev Umgebung sind
-        # Die eigentliche Aria2 Prüfung und Installation macht der DownloadManager
         if getattr(sys, 'frozen', False): 
-            pass # Exe Modus
+            pass 
         else:
-            # Dev Modus: Warnung wenn Quelldatei fehlt
             if not (Path(__file__).parent / "server" / "aria2c.exe").exists():
                 pass 
 
@@ -69,7 +66,8 @@ class TorrentClient:
                 "setup_path_q": "Pick ur Path...",
                 "explorer_closed": "Explorer got closed...",
                 "path_fallback": "Default Path got selected, you can change it in Settings.",
-                "users_online": "Users Online"
+                "users_online": "Users Online",
+                "refresh_rate": "Auto-Refresh Rate (sec)"
             },
             "de": {
                 "dl_torrent": "Torrent herunterladen",
@@ -104,7 +102,8 @@ class TorrentClient:
                 "setup_path_q": "Wähle deinen Pfad...",
                 "explorer_closed": "Explorer wurde geschlossen...",
                 "path_fallback": "Standard Pfad gewählt, du kannst es in den Settings ändern.",
-                "users_online": "Nutzer Online"
+                "users_online": "Nutzer Online",
+                "refresh_rate": "Auto-Refresh Rate (sek)"
             }
         }
 
@@ -239,7 +238,8 @@ class TorrentClient:
             self.ui.message(f"{self.t('err_folder')}: {e}", self.ui.RED)
 
     def explore_tab(self):
-        url = "https://raw.githubusercontent.com/74xyr/osTorrent/main/torrents.json"
+        url = "http://5.231.29.228/torrents"
+        
         try:
             self.ui.header("Loading...", art_key="loading")
             resp = requests.get(url, timeout=5)
@@ -272,11 +272,20 @@ class TorrentClient:
                 self.start_download(selected_item['magnet'])
 
     def download_list(self):
+        # 1. Einmalig Screen löschen und Header malen
+        self.ui.clear()
+        
         while True:
-            self.ui.header(self.t("dl_list"), art_key="dl_list")
+            # 2. Cursor zurücksetzen (NICHT CLEAR!)
+            self.ui.reset_cursor()
+            
+            # 3. Header drübermalen (clear=False wichtig!)
+            self.ui.header(self.t("dl_list"), art_key="dl_list", clear=False)
+            
             torrents = list(self.dm.get_all_torrents().values())
             
-            if not torrents: print(f"  {self.t('empty')}")
+            if not torrents: 
+                print(f"  {self.t('empty')}")
             else:
                 for i, t in enumerate(torrents, 1):
                     self.ui.print_torrent(i, t)
@@ -286,8 +295,15 @@ class TorrentClient:
             print(f"  [M] {self.t('menu_manage')}")
             print(f"  [0] {self.t('back')}")
             
+            # 4. Rest des Bildschirms löschen (falls Liste kürzer wird)
+            self.ui.clear_rest()
+            
             rate = self.config.get("refresh_rate")
-            key = self.ui.wait_for_input(rate if rate > 0 else 0.1)
+            # Bei Rate 0 (durchgehend) setzen wir Timeout sehr niedrig aber nicht 0,
+            # sonst flackert es durch zu viele Writes
+            if rate <= 0: rate = 0.1 
+            
+            key = self.ui.wait_for_input(rate)
             
             if key is None: continue
             if key == '0': break
@@ -295,8 +311,12 @@ class TorrentClient:
             if key == 'm' or key == 'enter':
                 t_names = [f"{t.state_str}: {t.name}" for t in torrents]
                 if not t_names: continue
+                # Hier müssen wir clearen, da neues Menü kommt
                 sel_idx = self.ui.select_menu(self.t("menu_manage"), t_names, exit_text=self.t("back"), art_key="dl_list")
                 if sel_idx != -1: self.manage_torrent(torrents[sel_idx])
+                # Wenn wir zurückkommen, Loop restartet -> Clear am Anfang wird nicht ausgeführt, 
+                # also müssen wir hier einmalig clearen damit reset_cursor wieder stimmt.
+                self.ui.clear()
 
     def manage_torrent(self, t):
         while True:
@@ -326,7 +346,8 @@ class TorrentClient:
                 f"Path: {c.get('default_download_path')}",
                 f"{self.t('limit')}: {c.get('download_limit')} KB/s",
                 f"{self.t('lang')}: {lang_label}",
-                self.t("clear_cache")
+                self.t("clear_cache"),
+                f"{self.t('refresh_rate')}: {c.get('refresh_rate')}s"
             ]
             
             idx = self.ui.select_menu(self.t("settings"), opts, exit_text=self.t("back"), art_key="settings")
@@ -348,3 +369,8 @@ class TorrentClient:
             if idx == 3:
                 c.clear_cache()
                 self.ui.message(self.t("cache_cleared"))
+            if idx == 4:
+                self.ui.header("Refresh Rate", art_key="settings")
+                inp = self.ui.input("Seconds (0 = fast)", animate=True)
+                if inp.isdigit():
+                    c.set("refresh_rate", int(inp))
