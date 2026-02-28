@@ -1,6 +1,8 @@
 import os
 import msvcrt
 import sys
+import time
+import ctypes
 
 class UI:
     def __init__(self):
@@ -12,9 +14,9 @@ class UI:
         self.RESET = "\033[0m"
         
         os.system('')
+        os.system('title osTorrent')
+        self._set_icon()
 
-        # === ASCII ARTS ===
-        # Wir nutzen raw strings (r""), damit Backslashes nicht escapen
         self.art = {
             "main": r"""
              ___________                                 __   
@@ -58,31 +60,50 @@ ___________              .__
 """
         }
 
+    def _set_icon(self):
+        """Setzt das Icon für Taskleiste und Fenster"""
+        try:
+            myappid = 'acay.ostorrent.client.1.0'
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+            
+            if getattr(sys, 'frozen', False):
+                kernel32 = ctypes.windll.kernel32
+                hwnd = kernel32.GetConsoleWindow()
+                
+                pass 
+        except: pass
+
     def clear(self):
         os.system('cls' if os.name == 'nt' else 'clear')
 
-    def header(self, title="osTorrent", art_key=None):
-        """Zeigt Header an. Wenn art_key gesetzt ist, wird ASCII Art genutzt."""
-        self.clear()
+    def type_text(self, text, speed=0.02, color="", end="\n"):
+        print(color, end="")
+        for char in text:
+            print(char, end="", flush=True)
+            time.sleep(speed)
+        print(self.RESET, end=end)
+
+    def header(self, title="osTorrent", art_key=None, clear=True):
+        if clear: self.clear()
         
-        # Wenn ein spezieller Key übergeben wurde (z.B. "settings")
         if art_key and art_key in self.art:
             print(self.CYAN + self.art[art_key] + self.RESET)
-            # Optional: Untertitel anzeigen, wenn er nicht Standard ist
-            if title != "osTorrent" and title != art_key:
-                print(f"  >> {title}")
-            print()
+            if art_key == "main":
+                print(f"{self.CYAN}                                       made by acay{self.RESET}\n")
             return
 
-        # Fallback: Standard Box Design für Untermenüs ohne eigenes Art
         print(self.CYAN + "+" + "=" * (self.width - 2) + "+")
         print("|" + title.center(self.width - 2) + "|")
         print("+" + "=" * (self.width - 2) + "+" + self.RESET)
         print()
 
-    def input(self, prompt):
+    def input(self, prompt, animate=False):
         try:
-            return input(f"{self.CYAN}  {prompt}: {self.RESET}").strip()
+            p_text = f"  {prompt}: "
+            if animate:
+                self.type_text(p_text, speed=0.02, color=self.CYAN, end="")
+                return input(self.RESET).strip()
+            return input(f"{self.CYAN}{p_text}{self.RESET}").strip()
         except: return ""
 
     def get_key(self):
@@ -98,19 +119,18 @@ ___________              .__
         except: return None
 
     def wait_for_input(self, timeout):
-        import time
         start = time.time()
         while time.time() - start < timeout:
-            if msvcrt.kbhit():
-                return self.get_key()
+            if msvcrt.kbhit(): return self.get_key()
             time.sleep(0.05)
         return None
 
-    def select_menu(self, title, options, exit_text="Back", art_key=None):
-        """Menü mit optionalem ASCII Art Key"""
+    def select_menu(self, title, options, exit_text="Back", art_key=None, hint=None, animate_hint=False):
         selected = 0
+        first_render = True
+        
         while True:
-            self.header(title, art_key)
+            self.header(title, art_key, clear=True)
             
             for i, option in enumerate(options):
                 prefix, color = "  ", self.RESET
@@ -122,11 +142,22 @@ ___________              .__
             if selected == len(options): prefix, color = "> ", self.RED
             print(f"{color}{prefix}[ {exit_text} ]{self.RESET}")
 
+            if hint:
+                print()
+                if animate_hint and first_render:
+                    self.type_text(f"  {hint}", color=self.CYAN, speed=0.03)
+                else:
+                    print(f"  {self.CYAN}{hint}{self.RESET}")
+
+            first_render = False
             key = self.get_key()
+            
             if key == 'up': selected = max(0, selected - 1)
-            elif key == 'down': selected = min(len(options), selected + 1)
+            elif key == 'down': 
+                limit = len(options) if exit_text else len(options) - 1
+                selected = min(limit, selected + 1)
             elif key == 'enter':
-                if selected == len(options): return -1
+                if exit_text and selected == len(options): return -1
                 return selected
 
     def print_torrent(self, idx, t):
@@ -156,14 +187,21 @@ ___________              .__
             print(f"      Status: {t.state_str}")
         print()
 
-    def message(self, msg, color=""):
-        print(f"{color}  {msg}{self.RESET}")
-        print("  Drücke eine Taste...")
+    def message(self, msg, color="", animate=True):
+        if animate:
+            self.type_text(f"  {msg}", color=color)
+        else:
+            print(f"{color}  {msg}{self.RESET}")
         msvcrt.getch()
 
-    def confirm(self, question):
-        print(f"\n  {self.YELLOW}{question} (J/N){self.RESET}")
+    def confirm(self, question, animate=True):
+        print()
+        if animate:
+            self.type_text(f"  {question} (J/N)", color=self.YELLOW, speed=0.03)
+        else:
+            print(f"  {self.YELLOW}{question} (J/N){self.RESET}")
+            
         while True:
             key = self.get_key()
             if key == 'j' or key == 'y': return True
-            if key == 'n': return False  
+            if key == 'n': return False

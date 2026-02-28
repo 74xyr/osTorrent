@@ -15,8 +15,10 @@ class TorrentClient:
     def __init__(self):
         if getattr(sys, 'frozen', False): base_path = Path(sys._MEIPASS)
         else: base_path = Path(__file__).parent
+        
         exe_path = base_path / "server" / "aria2c.exe"
         if not exe_path.exists(): exe_path = base_path / "aria2c.exe"
+        
         if not exe_path.exists(): sys.exit(1)
 
         self.ui = UI()
@@ -52,7 +54,11 @@ class TorrentClient:
                 "new_limit": "New Limit (KB/s)",
                 "pause": "Pause",
                 "resume": "Resume",
-                "dl_q": "Download this Torrent?"
+                "dl_q": "Download this Torrent?",
+                "nav_hint": "Use arrowkeys and enter to navigate",
+                "setup_path_q": "Pick ur Path...",
+                "explorer_closed": "Explorer got closed...",
+                "path_fallback": "Default Path got selected, you can change it in Settings."
             },
             "de": {
                 "dl_torrent": "Torrent herunterladen",
@@ -82,7 +88,11 @@ class TorrentClient:
                 "new_limit": "Neues Limit (KB/s)",
                 "pause": "Pausieren",
                 "resume": "Fortsetzen",
-                "dl_q": "Torrent herunterladen?"
+                "dl_q": "Torrent herunterladen?",
+                "nav_hint": "Benutze Pfeiltasten und Enter zum Navigieren",
+                "setup_path_q": "Wähle deinen Pfad...",
+                "explorer_closed": "Explorer wurde geschlossen...",
+                "path_fallback": "Standard Pfad gewählt, du kannst es in den Settings ändern."
             }
         }
 
@@ -104,30 +114,61 @@ class TorrentClient:
     def check_exit(self):
         if self.dm.is_downloading():
             self.ui.clear()
-            if self.ui.confirm(self.t("exit_warn")): return True
+            if self.ui.confirm(self.t("exit_warn"), animate=True): return True
             return False
         return True
 
     def setup(self):
-        # Hier nutzen wir noch das Standard-Logo (main)
-        self.ui.header("osTorrent", art_key="main")
-        print(self.ui.CYAN + "Welcome / Willkommen" + self.ui.RESET)
-        print()
-        idx = self.ui.select_menu("Select your language", ["English (EN)", "Deutsch (DE)"], exit_text="Exit", art_key="main")
-        if idx == -1: sys.exit(0)
+        self.ui.clear()
         
-        lang = "en" if idx == 0 else "de"
+        self.ui.type_text("Welcome to", speed=0.05, color=self.ui.CYAN)
+        
+        print(self.ui.CYAN + self.ui.art["main"] + self.ui.RESET)
+        self.ui.type_text("  Please pick ur language...", speed=0.03)
+        
+        options = ["English (EN)", "Deutsch (DE)"]
+        selected = 0
+        while True:
+            self.ui.clear()
+            print(self.ui.CYAN + "Welcome to" + self.ui.RESET)
+            print(self.ui.CYAN + self.ui.art["main"] + self.ui.RESET)
+            print(f"  Please pick ur language...")
+            print()
+            
+            for i, opt in enumerate(options):
+                prefix, color = "  ", self.ui.RESET
+                if i == selected: prefix, color = "> ", self.ui.CYAN
+                print(f"{color}{prefix}{opt}{self.ui.RESET}")
+            
+            key = self.ui.get_key()
+            if key == 'up': selected = max(0, selected - 1)
+            elif key == 'down': selected = min(1, selected + 1)
+            elif key == 'enter': break
+        
+        lang = "en" if selected == 0 else "de"
         self.config.set("language", lang)
         
-        self.ui.header("osTorrent", art_key="main")
-        default = self.config.get("default_download_path")
-        print(f"\n  {self.t('choose_path')}: [{self.ui.CYAN}{default}{self.ui.RESET}]")
+        self.ui.clear()
+        print(self.ui.CYAN + self.ui.art["main"] + self.ui.RESET)
         
-        if self.ui.confirm(self.t('change_q')):
+        self.ui.type_text(f"  {self.t('setup_path_q')}", speed=0.03)
+        print()
+        
+        default = self.config.get("default_download_path")
+        self.ui.type_text(f"  {self.t('choose_path')}: [{default}]", speed=0.02, color=self.ui.CYAN)
+        
+        if self.ui.confirm(self.t('change_q'), animate=True):
             root = tk.Tk(); root.withdraw(); root.attributes('-topmost', True)
             selected_path = filedialog.askdirectory(initialdir=default, title=self.t("choose_path"))
             root.destroy()
-            if selected_path: self.config.set("default_download_path", selected_path)
+            
+            if selected_path:
+                self.config.set("default_download_path", selected_path)
+            else:
+                print()
+                self.ui.type_text(f"  {self.t('explorer_closed')}", speed=0.03, color=self.ui.RED)
+                self.ui.type_text(f"  {self.t('path_fallback')}", speed=0.03, color=self.ui.YELLOW)
+                time.sleep(2)
         
         self.config.set("first_run", False)
 
@@ -136,8 +177,8 @@ class TorrentClient:
             explore_title = self.t("explore")
             options = [self.t("dl_torrent"), explore_title, self.t("dl_list"), self.t("settings")]
             
-            # Hier Logo anzeigen
-            idx = self.ui.select_menu("osTorrent", options, exit_text="Exit", art_key="main")
+            idx = self.ui.select_menu("osTorrent", options, exit_text="EXIT", 
+                                    art_key="main", hint=self.t("nav_hint"), animate_hint=True)
             
             if idx == -1:
                 if self.check_exit(): break
@@ -149,9 +190,8 @@ class TorrentClient:
             elif idx == 3: self.settings_menu()
 
     def add_torrent_manual(self):
-        # Nutzt auch das Main Logo, da es kein eigenes Art für "Add" gab
         self.ui.header("Download", art_key="main")
-        magnet = self.ui.input(self.t("magnet_input"))
+        magnet = self.ui.input(self.t("magnet_input"), animate=True)
         if not magnet.startswith("magnet:"): 
             self.ui.message(self.t("err_magnet"), self.ui.RED)
             return
@@ -170,7 +210,6 @@ class TorrentClient:
     def explore_tab(self):
         url = "https://raw.githubusercontent.com/74xyr/osTorrent/main/torrents.json"
         try:
-            # Hier "Loading..." ASCII Art
             self.ui.header("Loading...", art_key="loading")
             resp = requests.get(url, timeout=5)
             data = resp.json()
@@ -191,20 +230,18 @@ class TorrentClient:
             
             title = self.t("explore_new") if new_exists else self.t("explore")
             
-            # Hier "Explore" ASCII Art
             idx = self.ui.select_menu(title, display_list, exit_text=self.t("back"), art_key="explore")
             if idx == -1: break
             
             selected_item = data[idx]
             self.ui.clear()
-            self.ui.header(title, art_key="explore") # Header behalten
-            print(f"\n  {self.ui.CYAN}{selected_item['name']}{self.ui.RESET}")
-            if self.ui.confirm(self.t("dl_q")):
+            self.ui.header(title, art_key="explore")
+            self.ui.type_text(f"\n  {selected_item['name']}", color=self.ui.CYAN)
+            if self.ui.confirm(self.t("dl_q"), animate=True):
                 self.start_download(selected_item['magnet'])
 
     def download_list(self):
         while True:
-            # Hier "Download list" ASCII Art
             self.ui.header(self.t("dl_list"), art_key="dl_list")
             torrents = list(self.dm.get_all_torrents().values())
             
@@ -227,13 +264,12 @@ class TorrentClient:
             if key == 'm' or key == 'enter':
                 t_names = [f"{t.state_str}: {t.name}" for t in torrents]
                 if not t_names: continue
-                # Bei Manage Liste behalten wir das Art
                 sel_idx = self.ui.select_menu(self.t("menu_manage"), t_names, exit_text=self.t("back"), art_key="dl_list")
                 if sel_idx != -1: self.manage_torrent(torrents[sel_idx])
 
     def manage_torrent(self, t):
         while True:
-            self.ui.header(t.name[:50], art_key="dl_list") # Auch hier DL List Art
+            self.ui.header(t.name[:50], art_key="dl_list")
             status = self.t("pause") if t.state_str != "Paused" else self.t("resume")
             opts = [status, self.t("open_folder"), self.t("remove")]
             
@@ -246,7 +282,7 @@ class TorrentClient:
                 break
             if idx == 1: self.dm.open_folder(t.save_path)
             if idx == 2:
-                if self.ui.confirm(self.t("delete_q")):
+                if self.ui.confirm(self.t("delete_q"), animate=True):
                     self.dm.remove_torrent(t.gid)
                     break
 
@@ -262,7 +298,6 @@ class TorrentClient:
                 self.t("clear_cache")
             ]
             
-            # Hier "Settings" ASCII Art
             idx = self.ui.select_menu(self.t("settings"), opts, exit_text=self.t("back"), art_key="settings")
             if idx == -1: break
             
@@ -273,7 +308,7 @@ class TorrentClient:
                 if p: c.set("default_download_path", p)
             if idx == 1:
                 self.ui.header("Limit", art_key="settings")
-                inp = self.ui.input(self.t("new_limit"))
+                inp = self.ui.input(self.t("new_limit"), animate=True)
                 if inp.isdigit():
                     c.set("download_limit", int(inp))
                     self.dm.update_limit()

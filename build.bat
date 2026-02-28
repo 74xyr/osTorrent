@@ -1,66 +1,50 @@
 @echo off
-title osTorrent Builder (Fixed)
+title osTorrent Builder
 color 0b
 
-echo ==========================================
-echo      osTorrent Exe Builder
-echo ==========================================
+echo.
+echo  Building osTorrent...
 echo.
 
-:: 1. Sicherstellen, dass Aria2c da ist
+:: 1. Check Aria2c
 if not exist "server\aria2c.exe" (
-    echo [INFO] Lade Aria2c herunter...
     python -c "from aria2_setup import install_aria2; install_aria2()"
 )
 
-if not exist "server\aria2c.exe" (
+:: 2. Check Icon (WICHTIG)
+if not exist "os.ico" (
     color 0c
-    echo [FEHLER] server/aria2c.exe fehlt!
+    echo  [ERROR] os.ico fehlt! Das Icon wird nicht gesetzt.
+    echo  Bitte erstelle eine os.ico oder konvertiere die PNG.
     pause
     exit
 )
 
-:: 2. PyInstaller installieren (falls noch nicht da)
-echo.
-echo [INFO] Installiere Requirements...
-pip install pyinstaller requests
-cls
+pip install pyinstaller requests >nul
 
-:: 3. Exe bauen (via Python Modul)
-echo.
-echo [INFO] Erstelle osTorrent.exe...
-echo Dies dauert einen Moment...
-echo.
-
-:: WICHTIG: Wir nutzen "python -m PyInstaller" statt nur "pyinstaller"
+:: 3. Build (Ohne --strip, aber mit Icon)
 python -m PyInstaller --noconfirm --onefile --console --clean ^
     --name "osTorrent" ^
+    --icon "os.ico" ^
     --add-data "server\aria2c.exe;server" ^
-    --hidden-import "aria2_setup" ^
+    --add-data "os.ico;." ^
     main.py
-
-echo.
-echo ==========================================
-echo             STATUS BERICHT
-echo ==========================================
 
 if exist "dist\osTorrent.exe" (
     color 0a
-    echo [ERFOLG] Die Datei wurde erstellt!
     echo.
-    echo Kopiere Datei aus "dist" hierher...
-    copy /Y "dist\osTorrent.exe" "osTorrent.exe"
+    echo  [SUCCESS] osTorrent.exe created.
     echo.
-    echo Fertig! Deine "osTorrent.exe" ist bereit.
+    copy /Y "dist\osTorrent.exe" "osTorrent.exe" >nul
+    rmdir /S /Q "build"
+    rmdir /S /Q "dist"
+    del "osTorrent.spec"
+    
+    echo  TIPP: Wenn das Icon fehlt, verschiebe die .exe in einen
+    echo        anderen Ordner (Windows Cache Problem).
 ) else (
     color 0c
-    echo [FEHLER] Die .exe wurde NICHT erstellt.
-    echo Bitte schau oben nach Fehlermeldungen.
+    echo  [ERROR] Build failed.
 )
-
-:: Aufräumen (optional)
-if exist "osTorrent.spec" del "osTorrent.spec"
-if exist "build" rmdir /S /Q "build"
-if exist "dist" rmdir /S /Q "dist"
 
 pause
