@@ -1,10 +1,3 @@
-             ___________                                 __   
-  ____  _____\__    ___/_________________   ____   _____/  |_ 
- /  _ \/  ___/ |    | /  _ \_  __ \_  __ \_/ __ \ /    \   __\
-(  <_> )___ \  |    |(  <_> )  | \/|  | \/\  ___/|   |  \  |  
- \____/____  > |____| \____/|__|   |__|    \___  >___|  /__|  
-           \/         made by acay             \/     \/     
-
 Just a clean, lightweight Torrent Client with a TUI (Terminal User Interface).
 I built this because I wanted something that looks cool and runs fast. It uses the aria2c engine under the hood, so speeds are actually good.
 
