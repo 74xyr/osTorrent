@@ -9,8 +9,8 @@ import subprocess
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog
+import winreg # Für File Association
 
-# Für Shortcuts (wird in build.bat installiert)
 try:
     import winshell
     from win32com.client import Dispatch
@@ -21,7 +21,7 @@ from config_manager import ConfigManager
 from download_manager import DownloadManager
 
 class TorrentClient:
-    def __init__(self):
+    def __init__(self, startup_file=None):
         if getattr(sys, 'frozen', False): base_path = Path(sys._MEIPASS)
         else: base_path = Path(__file__).parent
         
@@ -32,10 +32,10 @@ class TorrentClient:
         self.ui = UI()
         self.config = ConfigManager()
         
-        # === AUTO INSTALL ===
-        if getattr(sys, 'frozen', False): # Nur wenn als Exe
+        # === AUTO INSTALL & REGISTRY ===
+        if getattr(sys, 'frozen', False): 
             self.check_installation()
-        # ====================
+        # ===============================
 
         self.dm = DownloadManager(self.config)
         
@@ -47,9 +47,12 @@ class TorrentClient:
         self.ping_thread = threading.Thread(target=self._online_heartbeat_loop, daemon=True)
         self.ping_thread.start()
 
+        # === DRAG & DROP HANDLING ===
+        self.startup_file = startup_file
+        # ============================
+
         self.txt = {
             "en": {
-                # ... (Texte bleiben gleich) ...
                 "dl_torrent": "Download Torrent",
                 "explore": "Explore",
                 "explore_new": "Explore (NEW TORRENTS)",
@@ -59,7 +62,7 @@ class TorrentClient:
                 "change_q": "Would you like to change it?",
                 "exit_warn": "Downloads are running! Are you sure you want to quit osTorrent?",
                 "added": "Torrent added successfully!",
-                "err_magnet": "Invalid Magnet Link",
+                "err_magnet": "Invalid Magnet/File",
                 "menu_clear": "Clear finished list",
                 "menu_manage": "Manage Torrent",
                 "limit": "Download Limit",
@@ -83,10 +86,10 @@ class TorrentClient:
                 "explorer_closed": "Explorer got closed...",
                 "path_fallback": "Default Path got selected, you can change it in Settings.",
                 "users_online": "Users Online",
-                "refresh_rate": "Auto-Refresh Rate (sec)"
+                "refresh_rate": "Auto-Refresh Rate (sec)",
+                "drop_q": "File dropped detected. Download?"
             },
             "de": {
-                # ... (Texte bleiben gleich) ...
                 "dl_torrent": "Torrent herunterladen",
                 "explore": "Entdecken",
                 "explore_new": "Entdecken (NEUE TORRENTS)",
@@ -96,7 +99,7 @@ class TorrentClient:
                 "change_q": "Möchten Sie diesen ändern?",
                 "exit_warn": "Es werden gerade Torrents installiert. Sind Sie sicher, dass Sie osTorrent beenden möchten?",
                 "added": "Torrent erfolgreich hinzugefügt!",
-                "err_magnet": "Ungültiger Magnet Link",
+                "err_magnet": "Ungültiger Magnet/Datei",
                 "menu_clear": "Liste bereinigen",
                 "menu_manage": "Verwalten",
                 "limit": "Download Limit",
@@ -120,7 +123,8 @@ class TorrentClient:
                 "explorer_closed": "Explorer wurde geschlossen...",
                 "path_fallback": "Standard Pfad gewählt, du kannst es in den Settings ändern.",
                 "users_online": "Nutzer Online",
-                "refresh_rate": "Auto-Refresh Rate (sek)"
+                "refresh_rate": "Auto-Refresh Rate (sek)",
+                "drop_q": "Datei erkannt. Herunterladen?"
             }
         }
 
@@ -130,22 +134,21 @@ class TorrentClient:
         return self.txt.get(lang, self.txt["en"]).get(key, key)
 
     def check_installation(self):
-        """Kopiert Exe nach AppData und erstellt Shortcut"""
-        # Wenn wir schon in AppData laufen, sind wir fertig
+        """Kopiert Exe nach AppData, erstellt Shortcut UND registriert Dateiendung"""
         current_exe = sys.executable
         target_dir = Path(os.getenv('LOCALAPPDATA')) / "osTorrent"
         target_exe = target_dir / "osTorrent.exe"
         
-        # 1. Wenn wir NICHT im Zielordner sind -> Kopieren & Neustarten
+        # 1. Dateiregistrierung für .torrent (Öffnen mit...)
+        self._register_file_association(str(target_exe))
+
+        # 2. Installation / Update
         if str(current_exe).lower() != str(target_exe).lower():
             try:
-                # Prüfen ob wir Schreibrechte haben, sonst ignorieren
                 if not target_dir.exists(): target_dir.mkdir(parents=True, exist_ok=True)
                 
-                # Exe kopieren
                 shutil.copy2(current_exe, target_exe)
                 
-                # 2. Shortcut erstellen
                 desktop = Path(winshell.desktop())
                 shortcut_path = desktop / "osTorrent.lnk"
                 
@@ -156,17 +159,29 @@ class TorrentClient:
                 shortcut.IconLocation = str(target_exe)
                 shortcut.save()
                 
-                # 3. Von neuem Ort starten und hier beenden
-                subprocess.Popen([str(target_exe)])
+                # Starte neu von der installierten Location und übergebe evtl. Argumente
+                args = [str(target_exe)] + sys.argv[1:]
+                subprocess.Popen(args)
                 sys.exit(0)
-            except Exception as e:
-                # Falls Fehler (z.B. Rechte), laufen wir einfach lokal weiter
+            except Exception:
                 pass
 
+    def _register_file_association(self, exe_path):
+        """Fügt Registry Keys hinzu für Drag & Drop und Doppelklick"""
+        try:
+            # HKEY_CURRENT_USER\Software\Classes\.torrent -> osTorrent
+            key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\.torrent")
+            winreg.SetValue(key, "", winreg.REG_SZ, "osTorrent")
+            winreg.CloseKey(key)
+
+            # HKEY_CURRENT_USER\Software\Classes\osTorrent\shell\open\command -> "EXE" "%1"
+            key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\osTorrent\shell\open\command")
+            winreg.SetValue(key, "", winreg.REG_SZ, f'"{exe_path}" "%1"')
+            winreg.CloseKey(key)
+        except: pass
+
     def restart_program(self):
-        """Startet die Anwendung sauber neu (Subprocess statt execl)"""
         self.dm.shutdown()
-    
         time.sleep(0.5)
         subprocess.Popen([sys.executable] + sys.argv)
         sys.exit(0)
@@ -176,17 +191,29 @@ class TorrentClient:
             resp = requests.get(self.api_url, timeout=2)
             if resp.status_code == 200:
                 self.online_users = resp.json().get("online", 1)
+                title_text = f"osTorrent | {self.online_users} {self.t('users_online')}"
+                self.ui.set_title(title_text)
         except: pass
 
     def _online_heartbeat_loop(self):
         while not self.stop_threads:
             self.update_online_status()
-            for _ in range(60):
+            # LOGIK 2: Schnelleres Update (alle 5 Sekunden) für Live-Gefühl
+            for _ in range(50): # 5 Sekunden (50 * 0.1)
                 if self.stop_threads: return
-                time.sleep(1)
+                time.sleep(0.1)
 
     def run(self):
         if self.config.get("first_run"): self.setup()
+        
+        # LOGIK 3: Drag & Drop Handling beim Start
+        if self.startup_file:
+            self.ui.clear()
+            self.ui.header("Drop Detected", art_key="main")
+            print(f"  File: {Path(self.startup_file).name}")
+            if self.ui.confirm(self.t("drop_q"), animate=True):
+                self.start_download(self.startup_file)
+        
         while True:
             try:
                 self.main_menu()
@@ -249,8 +276,7 @@ class TorrentClient:
         while True:
             explore_title = self.t("explore")
             options = [self.t("dl_torrent"), explore_title, self.t("dl_list"), self.t("settings")]
-            user_text = f"{self.ui.GREEN}● {self.online_users} {self.t('users_online')}{self.ui.RESET}"
-            hint_text = f"{user_text}  |  {self.t('nav_hint')}"
+            hint_text = self.t('nav_hint')
             idx = self.ui.select_menu("osTorrent", options, exit_text="EXIT", art_key="main", hint=hint_text, animate_hint=False)
             if idx == -1:
                 if self.check_exit(): break
@@ -263,18 +289,26 @@ class TorrentClient:
     def add_torrent_manual(self):
         self.ui.header("Download", art_key="main")
         magnet = self.ui.input(self.t("magnet_input"), animate=True)
-        if not magnet.startswith("magnet:"): 
+        # Check ob es Magnet Link oder Dateipfad ist
+        if not magnet.startswith("magnet:") and not os.path.exists(magnet): 
             self.ui.message(self.t("err_magnet"), self.ui.RED)
             return
         self.start_download(magnet)
 
-    def start_download(self, magnet):
+    def start_download(self, magnet_or_file):
         path = self.config.get("default_download_path")
         try:
             Path(path).mkdir(parents=True, exist_ok=True)
-            gid = self.dm.add_magnet(magnet, path)
+            
+            gid = None
+            # Unterscheidung Magnet / File
+            if os.path.isfile(magnet_or_file):
+                gid = self.dm.add_torrent_file(magnet_or_file, path)
+            else:
+                gid = self.dm.add_magnet(magnet_or_file, path)
+
             if gid: self.ui.message(self.t("added"), self.ui.GREEN)
-            else: self.ui.message("Error", self.ui.RED)
+            else: self.ui.message("Error starting download", self.ui.RED)
         except Exception as e:
             self.ui.message(f"{self.t('err_folder')}: {e}", self.ui.RED)
 
@@ -292,8 +326,8 @@ class TorrentClient:
             display_list = []
             for item in data:
                 name = item['name']
-                magnet = item['magnet']
-                if self.config.is_torrent_new(magnet):
+                # LOGIK 1: Nutze Server-Flag "is_new"
+                if item.get('is_new', False):
                     name = f"{self.ui.YELLOW}[NEW]{self.ui.RESET} {name}"
                     new_exists = True
                 display_list.append(name)

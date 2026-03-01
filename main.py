@@ -7,12 +7,15 @@ import xml.parsers.expat
 # =========================================
 
 if __name__ == "__main__":
-    # Wenn wir als Exe laufen, überspringen wir setup hier,
-    # da torrent_client.py das jetzt regelt (Install to AppData)
     if not getattr(sys, 'frozen', False):
         if not install_aria2():
             print("Setup Failed.")
             sys.exit(1)
+            
+    # LOGIK 3: Check auf Drag & Drop (Argumente)
+    dropped_file = None
+    if len(sys.argv) > 1:
+        dropped_file = sys.argv[1]
         
-    client = TorrentClient()
+    client = TorrentClient(startup_file=dropped_file)
     client.run()

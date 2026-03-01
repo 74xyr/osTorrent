@@ -9,7 +9,6 @@ import shutil
 from pathlib import Path
 from dataclasses import dataclass
 
-# Tracker Booster Liste (Beschleunigt Magnet-Links extrem)
 PUBLIC_TRACKERS = [
     "udp://tracker.opentrackr.org:1337/announce",
     "udp://open.demonii.com:1337/announce",
@@ -44,34 +43,26 @@ class DownloadManager:
         self.lock = threading.Lock()
         self.torrents = {}
         
-        # 1. Pfade definieren (AppData für saubere Installation)
         self.app_data = Path(os.getenv('LOCALAPPDATA')) / "osTorrent"
         self.aria2_local_path = self.app_data / "aria2c.exe"
         self.session_file = self.app_data / "session.txt"
         
-        # 2. Ordner und Session erstellen
         self.app_data.mkdir(parents=True, exist_ok=True)
         if not self.session_file.exists(): 
             try: self.session_file.touch()
             except: pass
 
-        # 3. Engine installieren (aus der Exe entpacken)
         self._install_engine()
+        self._kill_existing_process()
 
-        # 4. Alte Prozesse killen (Verhindert Konflikte)
-        subprocess.run("taskkill /F /IM aria2c.exe", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
-
-        # 5. Starten (Mit Retry & Firewall Fix)
         if not self._start_aria2_daemon():
             self._add_firewall_rule()
             self._start_aria2_daemon()
 
-        # 6. Monitor starten
         self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self.monitor_thread.start()
 
     def _install_engine(self):
-        """Kopiert aria2c.exe einmalig in den AppData Ordner"""
         if self.aria2_local_path.exists(): return
         try:
             if getattr(sys, 'frozen', False):
@@ -80,15 +71,18 @@ class DownloadManager:
                 base_path = Path(__file__).parent
             
             source_path = base_path / "server" / "aria2c.exe"
-            # Fallback für Dev-Umgebung
             if not source_path.exists(): source_path = base_path / "aria2c.exe"
 
             if source_path.exists():
                 shutil.copy2(source_path, self.aria2_local_path)
         except: pass
 
+    def _kill_existing_process(self):
+        try:
+            subprocess.run("taskkill /F /IM aria2c.exe", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
+        except: pass
+
     def _add_firewall_rule(self):
-        """Versucht silent eine Firewall-Regel hinzuzufügen"""
         try:
             cmd = f"New-NetFirewallRule -Program '{self.aria2_local_path}' -Action Allow -Profile Domain,Private,Public -DisplayName 'osTorrent Engine'"
             subprocess.run(["powershell", "-Command", cmd], creationflags=0x08000000)
@@ -111,9 +105,9 @@ class DownloadManager:
             "--max-connection-per-server=16",
             "--seed-time=0",
             "--quiet=true",
-            "--follow-torrent=mem",     # Behält Downloads im RAM
-            "--bt-enable-lpd=true",     # Local Peer Discovery
-            "--enable-dht=true",        # DHT
+            "--follow-torrent=mem",
+            "--bt-enable-lpd=true",
+            "--enable-dht=true",
             "--dht-listen-port=6881",
             f"--input-file={self.session_file}",
             f"--save-session={self.session_file}",
@@ -135,7 +129,6 @@ class DownloadManager:
             )
         except: return False
         
-        # Warte bis RPC Port erreichbar ist
         for _ in range(10):
             if self._is_port_open(6800):
                 try:
@@ -152,7 +145,6 @@ class DownloadManager:
         except: return False
 
     def add_magnet(self, magnet_link, save_path):
-        """Fügt Torrent hinzu inkl. Tracker Booster"""
         if not self.rpc: self._start_aria2_daemon()
         if not self.rpc: return None
         try:
@@ -162,6 +154,23 @@ class DownloadManager:
             }
             return self.rpc.aria2.addUri([magnet_link], options)
         except: return None
+
+    # === NEU: Support für .torrent Dateien ===
+    def add_torrent_file(self, file_path, save_path):
+        if not self.rpc: self._start_aria2_daemon()
+        if not self.rpc: return None
+        try:
+            # Datei muss binary eingelesen und an Aria2 gesendet werden
+            with open(file_path, "rb") as f:
+                torrent_content = f.read()
+            
+            options = {
+                "dir": str(Path(save_path).absolute())
+            }
+            # xmlrpc.client.Binary wickelt Base64 Encoding ab
+            return self.rpc.aria2.addTorrent(xmlrpc.client.Binary(torrent_content), [], options)
+        except: return None
+    # ========================================
 
     def pause_torrent(self, gid):
         if self.rpc: self.rpc.aria2.pause(gid)
@@ -180,8 +189,8 @@ class DownloadManager:
         if not self.rpc: return
         with self.lock: current_gids = list(self.torrents.keys())
         for gid in current_gids:
-            t = self.torrents[gid]
-            if t.state_str in ["Complete", "Removed", "Error"]:
+            t = self.torrents.get(gid)
+            if t and t.state_str in ["Complete", "Removed", "Error"]:
                 try: self.rpc.aria2.removeDownloadResult(gid)
                 except: pass
 
@@ -189,13 +198,13 @@ class DownloadManager:
         if not self.rpc: return
         limit = self.config.get("download_limit")
         limit_str = f"{limit}K" if limit > 0 else "0"
-        self.rpc.aria2.changeGlobalOption({"max-download-limit": limit_str})
+        try: self.rpc.aria2.changeGlobalOption({"max-download-limit": limit_str})
+        except: pass
 
     def get_all_torrents(self):
         with self.lock: return self.torrents.copy()
 
     def _monitor_loop(self):
-        """Haupt-Loop für Status-Updates"""
         keys = ["gid", "status", "totalLength", "completedLength", "downloadSpeed", 
                 "dir", "bittorrent", "followedBy", "errorCode", "errorMessage"]
         fail_count = 0
@@ -206,8 +215,6 @@ class DownloadManager:
                 continue
                 
             try:
-                # Wir holen ALLE Listen (Active, Waiting, Stopped)
-                # Das garantiert sofortige Sichtbarkeit
                 active = self.rpc.aria2.tellActive(keys)
                 waiting = self.rpc.aria2.tellWaiting(0, 100, keys)
                 stopped = self.rpc.aria2.tellStopped(0, 100, keys)
@@ -219,15 +226,11 @@ class DownloadManager:
                 for d in all_downloads:
                     gid, status_raw = d['gid'], d['status']
                     
-                    # === INTELLIGENTES CLEANUP ===
-                    
-                    # 1. Duplikate löschen (Error 12)
                     if d.get('errorCode') == '12':
                         try: self.rpc.aria2.removeDownloadResult(gid)
                         except: pass
                         continue
 
-                    # 2. Metadaten-Artefakte erkennen
                     is_meta_artifact = False
                     if 'followedBy' in d: is_meta_artifact = True
                         
@@ -238,13 +241,10 @@ class DownloadManager:
                     if name == "Unbekannt / Metadata" and status_raw in ['complete', 'error', 'removed']:
                         is_meta_artifact = True
 
-                    # Artefakte aus der Liste entfernen
                     if is_meta_artifact and status_raw in ['complete', 'error', 'removed']:
                         try: self.rpc.aria2.removeDownloadResult(gid)
                         except: pass
                         continue 
-                    
-                    # === STATUS BERECHNUNG ===
                     
                     total = int(d['totalLength'])
                     done = int(d['completedLength'])
@@ -256,7 +256,7 @@ class DownloadManager:
 
                     if status_raw == 'active' and total == 0: state_str = "Metadata"
                     elif status_raw == 'active': state_str = "Downloading"
-                    elif status_raw == 'waiting': state_str = "Queued" # Warteschlange
+                    elif status_raw == 'waiting': state_str = "Queued"
                     elif status_raw == 'paused': state_str = "Paused"
                     elif status_raw == 'error':
                         err_code = d.get('errorCode', '?')
@@ -272,8 +272,6 @@ class DownloadManager:
                         eta=eta, save_path=d['dir'], total_size=total,
                         error_msg=error_msg
                     )
-                    
-                    if status_raw == "complete" and self.config.get("auto_open_on_finish"): pass
 
                 with self.lock: self.torrents = current_torrents
                 
@@ -283,7 +281,7 @@ class DownloadManager:
                     self._start_aria2_daemon()
                     fail_count = 0
             
-            time.sleep(0.5) # Schnelles Update für "direktes" Feeling
+            time.sleep(0.5)
 
     def open_folder(self, path):
         try:
@@ -296,6 +294,4 @@ class DownloadManager:
         if self.rpc:
             try: self.rpc.aria2.saveSession()
             except: pass
-        try:
-            subprocess.run("taskkill /F /IM aria2c.exe", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
-        except: pass
+        self._kill_existing_process()
