@@ -105,7 +105,7 @@ ___________              .__
         if art_key and art_key in self.art:
             print(self.CYAN + self.art[art_key] + self.RESET)
             if art_key == "main":
-                print(f"{self.CYAN}                                       made by acay{self.RESET}\n")
+                print(f"{self.CYAN}   made by acay{self.RESET}\n")
             return
 
         print(self.CYAN + "+" + "=" * (self.width - 2) + "+")

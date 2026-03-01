@@ -9,7 +9,7 @@ import subprocess
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog
-import winreg # Für File Association
+import winreg 
 
 try:
     import winshell
@@ -39,7 +39,10 @@ class TorrentClient:
 
         self.dm = DownloadManager(self.config)
         
-        self.api_url = "http://5.231.29.228/heartbeat"
+        # === ÄNDERUNG: NEUE HTTPS URL ===
+        self.api_url = "https://api.acay.me/heartbeat"
+        # ================================
+        
         self.online_users = 1
         self.stop_threads = False
         
@@ -47,9 +50,7 @@ class TorrentClient:
         self.ping_thread = threading.Thread(target=self._online_heartbeat_loop, daemon=True)
         self.ping_thread.start()
 
-        # === DRAG & DROP HANDLING ===
         self.startup_file = startup_file
-        # ============================
 
         self.txt = {
             "en": {
@@ -134,15 +135,12 @@ class TorrentClient:
         return self.txt.get(lang, self.txt["en"]).get(key, key)
 
     def check_installation(self):
-        """Kopiert Exe nach AppData, erstellt Shortcut UND registriert Dateiendung"""
         current_exe = sys.executable
         target_dir = Path(os.getenv('LOCALAPPDATA')) / "osTorrent"
         target_exe = target_dir / "osTorrent.exe"
         
-        # 1. Dateiregistrierung für .torrent (Öffnen mit...)
         self._register_file_association(str(target_exe))
 
-        # 2. Installation / Update
         if str(current_exe).lower() != str(target_exe).lower():
             try:
                 if not target_dir.exists(): target_dir.mkdir(parents=True, exist_ok=True)
@@ -159,7 +157,6 @@ class TorrentClient:
                 shortcut.IconLocation = str(target_exe)
                 shortcut.save()
                 
-                # Starte neu von der installierten Location und übergebe evtl. Argumente
                 args = [str(target_exe)] + sys.argv[1:]
                 subprocess.Popen(args)
                 sys.exit(0)
@@ -167,14 +164,11 @@ class TorrentClient:
                 pass
 
     def _register_file_association(self, exe_path):
-        """Fügt Registry Keys hinzu für Drag & Drop und Doppelklick"""
         try:
-            # HKEY_CURRENT_USER\Software\Classes\.torrent -> osTorrent
             key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\.torrent")
             winreg.SetValue(key, "", winreg.REG_SZ, "osTorrent")
             winreg.CloseKey(key)
 
-            # HKEY_CURRENT_USER\Software\Classes\osTorrent\shell\open\command -> "EXE" "%1"
             key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\osTorrent\shell\open\command")
             winreg.SetValue(key, "", winreg.REG_SZ, f'"{exe_path}" "%1"')
             winreg.CloseKey(key)
@@ -198,15 +192,13 @@ class TorrentClient:
     def _online_heartbeat_loop(self):
         while not self.stop_threads:
             self.update_online_status()
-            # LOGIK 2: Schnelleres Update (alle 5 Sekunden) für Live-Gefühl
-            for _ in range(50): # 5 Sekunden (50 * 0.1)
+            for _ in range(50):
                 if self.stop_threads: return
                 time.sleep(0.1)
 
     def run(self):
         if self.config.get("first_run"): self.setup()
         
-        # LOGIK 3: Drag & Drop Handling beim Start
         if self.startup_file:
             self.ui.clear()
             self.ui.header("Drop Detected", art_key="main")
@@ -289,7 +281,6 @@ class TorrentClient:
     def add_torrent_manual(self):
         self.ui.header("Download", art_key="main")
         magnet = self.ui.input(self.t("magnet_input"), animate=True)
-        # Check ob es Magnet Link oder Dateipfad ist
         if not magnet.startswith("magnet:") and not os.path.exists(magnet): 
             self.ui.message(self.t("err_magnet"), self.ui.RED)
             return
@@ -299,9 +290,7 @@ class TorrentClient:
         path = self.config.get("default_download_path")
         try:
             Path(path).mkdir(parents=True, exist_ok=True)
-            
             gid = None
-            # Unterscheidung Magnet / File
             if os.path.isfile(magnet_or_file):
                 gid = self.dm.add_torrent_file(magnet_or_file, path)
             else:
@@ -313,7 +302,9 @@ class TorrentClient:
             self.ui.message(f"{self.t('err_folder')}: {e}", self.ui.RED)
 
     def explore_tab(self):
-        url = "http://5.231.29.228/torrents"
+        # === ÄNDERUNG: NEUE HTTPS URL ===
+        url = "https://api.acay.me/torrents"
+        # ================================
         try:
             self.ui.header("Loading...", art_key="loading")
             resp = requests.get(url, timeout=5)
@@ -326,7 +317,6 @@ class TorrentClient:
             display_list = []
             for item in data:
                 name = item['name']
-                # LOGIK 1: Nutze Server-Flag "is_new"
                 if item.get('is_new', False):
                     name = f"{self.ui.YELLOW}[NEW]{self.ui.RESET} {name}"
                     new_exists = True
